@@ -1,0 +1,472 @@
+---
+jupyter:
+  jupytext:
+    text_representation:
+      extension: .Rmd
+      format_name: rmarkdown
+      format_version: '1.2'
+      jupytext_version: 1.15.0
+  kernelspec:
+    display_name: Python 3 (ipykernel)
+    language: python
+    name: python3
+---
+
+```{python}
+# %load_ext autoreload
+# %autoreload 2
+```
+
+# Schwinger model
+
+
+This notebook illustrates how  to train the normalizing flow model for the 2D Schwinger model with two flavors of Wilson fermions \[1\].  
+
+```{python}
+import time
+
+import torch
+import numpy as np
+import scipy
+
+import matplotlib.pyplot as plt    
+```
+
+```{python}
+torch.__version__
+```
+
+```{python}
+import normalizing_flow.flow as nf
+from training.loss import REINFORCE_loss, rt_loss
+from training.train import train_step
+
+import utils
+import utils.metrics as metrics
+from utils.live_plot import init_live_plot, update_plots
+import utils.checkpoint as chck
+
+import phys_models.U1 as u1
+import phys_models.schwinger as sch
+
+
+from normalizing_flow.gauge_equivariant import make_schwinger_model
+```
+
+```{python}
+torch.cuda.is_available()
+```
+
+```{python}
+for dev in range(torch.cuda.device_count()):
+    print(torch.cuda.get_device_properties(dev))
+```
+
+```{python}
+torch_device = "cuda:0"
+float_dtype = "float32"
+```
+
+```{python}
+L = 8
+lattice_shape = (L,L)
+link_shape = (2,L,L)
+beta = 2.0
+kappa = 0.276
+u1_action = u1.U1GaugeAction(beta)
+qed_action =  sch.QEDAction(beta, kappa)
+```
+
+```{python}
+prior = u1.MultivariateUniform(torch.zeros(link_shape), 2*np.pi*torch.ones(link_shape), device=torch_device)
+```
+
+```{python}
+z = prior.sample_n(8)
+```
+
+```{python}
+qed_action(z)
+```
+
+```{python}
+u1_action(z)
+```
+
+```{python}
+D = sch.Dirac(z,kappa, z.device)
+```
+
+```{python}
+D.shape
+```
+
+## Creating the model
+
+```{python}
+# Neural network parameters
+model_cfg = {
+    'lattice_shape' : lattice_shape,
+    'n_layers' : 48,
+    'hidden_sizes' : [64,64],
+    'kernel_size' : 3,
+    'dilation' : [1,2,3],
+# Circular splines
+    'n_knots' : 9,
+    'float_dtype' : float_dtype
+}
+
+```
+
+```{python}
+model = make_schwinger_model(**model_cfg, device=torch_device, verbose=1)
+```
+
+```{python}
+layers=model['layers']
+prior=model['prior']
+```
+
+## Training
+
+```{python}
+N_era = 4
+N_epoch = 50
+print_freq = 25 # epochs
+plot_freq = 5 # epochs
+
+history = {
+    'dkl' : [],
+    'std_dkl': [],
+    'loss' : [],
+    'ess' : []
+}
+
+
+loss_fn_name = 'REINFORCE'
+loss_function = REINFORCE_loss
+base_lr = .00025
+optimizer = torch.optim.Adam(model['layers'].parameters(), lr=base_lr)
+```
+
+```{python}
+# Those should be adjusted according to the lattice size and the amount of the memory that your GPU has. 
+batch_size= 512
+n_batches= 2 # number of batches used for one gradient update i.e. the gradient is effectively estimated from batch_size * n_batches configurations. 
+```
+
+```{python}
+# %%time
+live_plot = init_live_plot(N_era, N_epoch)
+start_time = time.time()
+
+total_epochs = N_era*N_epoch
+epochs_done=0
+
+for era in range(N_era):
+    for epoch in range(N_epoch):
+        m = train_step(use_amp=False, model=model, action=qed_action, loss_fn=loss_function, batch_size=batch_size, n_batches=n_batches, optimizer=optimizer)
+        metrics.add_metrics(history, m)
+        epochs_done+=1
+        if (epoch+1) % print_freq == 0:
+            chck.safe_save_checkpoint(model=layers, optimizer=optimizer, scheduler=None,era=era, path=f"{loss_fn_name}_{L:02d}x{L:02d}.zip", model_cfg=model_cfg)
+            ellapsed_time = time.time() - start_time
+            avg = metrics.average_metrics(history, N_epoch, history.keys())
+
+           
+            print(f"Era {era:3d} epoch {epoch:4d} elapsed time {ellapsed_time:.1f}", end="")
+            if epochs_done>0 :
+                time_per_epoch = ellapsed_time/epochs_done
+                time_remaining = (total_epochs-epochs_done)*time_per_epoch
+                print(f"  {time_per_epoch:.2f}s/epoch  remaining {utils.format_time(time_remaining):s}")
+                
+                metrics.print_dict(avg)
+                
+        if (epoch+1) % plot_freq == 0:
+            update_plots(history, **live_plot);
+
+
+print(f"{ellapsed_time/N_era:.2f}s/era")
+```
+
+## Loading the model
+
+
+We could go on with sampling from the model but usually we will use the saved models trained on some GPU clusters. Code below explains how it can be done.
+
+```{python}
+loaded = torch.load(f"{loss_fn_name}_{L:02d}x{L:02d}.zip")
+```
+
+```{python}
+loaded.keys()
+```
+
+```{python}
+loaded['model_cfg']
+```
+
+```{python}
+link_shape = (2, L, L)
+```
+
+```{python}
+model = make_schwinger_model(**loaded['model_cfg'], device=torch_device, verbose=1)
+```
+
+```{python}
+prior = model['prior']
+layers = model['layers']
+```
+
+```{python}
+layers.load_state_dict(loaded['state_dict'])
+```
+
+## Further training
+
+
+If we would like to train our model  further we also need to load the optimizer and optionally scheduler if present. This is needed because most of the optimizers, notably `Adam` are statefull. 
+
+```{python}
+optimizer = getattr(torch.optim,loaded['optim'])(layers.parameters())
+optimizer.load_state_dict(loaded['opt_state_dict'])
+```
+
+```{python}
+# %%time
+N_era = 2
+N_epoch = 50
+print_freq = 25 # epochs
+plot_freq = 5 # epochs
+
+history = {
+    'dkl' : [],
+    'std_dkl': [],
+    'loss' : [],
+    'ess' : []
+}
+
+
+live_plot = init_live_plot(N_era, N_epoch)
+start_time = time.time()
+
+total_epochs = N_era*N_epoch
+epochs_done=0
+
+for era in range(N_era):
+    for epoch in range(N_epoch):
+        m = train_step(use_amp=False, model=model, action=qed_action, loss_fn=loss_function, batch_size=batch_size, n_batches=n_batches, optimizer=optimizer)
+        metrics.add_metrics(history, m)
+        epochs_done+=1
+        if (epoch+1) % print_freq == 0:
+            
+            chck.safe_save_checkpoint(model=layers, optimizer=optimizer, scheduler=None, era=era, path=f"{loss_fn_name}_{L:02d}x{L:02d}.zip")
+            ellapsed_time = time.time()-start_time
+            avg = metrics.average_metrics(history, N_epoch, history.keys())
+
+           
+            print(f"Era {era:3d} epoch {epoch:4d} ellapsed time {ellapsed_time:.1f}", end="")
+            if epochs_done>0 :
+                time_per_epoch = ellapsed_time/epochs_done
+                time_remaining = (total_epochs-epochs_done)*time_per_epoch
+                print(f"  {time_per_epoch:.2f}s/epoch  remaining {utils.format_time(time_remaining):s}")
+                
+                metrics.print_dict(avg)
+                
+        if (epoch+1) % plot_freq == 0:
+            update_plots(history, **live_plot);
+
+
+print(f"{ellapsed_time/N_era:.2f}s/era")
+```
+
+## Sampling
+
+
+After we have trained the model we can do the actual sampling. Because of the memory constraints we generate samples in batches which size has to again be determined based on the size of the lattice and the amount of memory on our GPU.  Function `sample` from the module [`normalizing_flow.flow`](../../nmcmc/src/normalizing_flow/flow.py) returns the generated configurations $u$ as well as the logarithms of the probability $\log q(u)$ with which each configuration was generated. 
+
+```{python}
+# %%time
+u,lq = nf.sample(n_samples=2**16, batch_size=1024, prior=prior, layers=layers)
+```
+
+Once we have the configurations we have to calculate the value of the action $S(u)$ for each of them. This gives us the logarithm of the desired probability up to a constant
+
+
+$$ -S(u)= \log p(u) + \log Z$$ 
+
+
+where $Z$ is the  partition function. 
+
+```{python}
+# %%time
+lp = -nf.calc_action(u,batch_size=128, action=qed_action, device=torch_device)
+```
+
+#### ESS 
+
+
+Having logarithm of both $q(u)$ and $p(u)$ we can estimate the effective sample size on larger sample
+
+```{python}
+ess = nf.compute_ess(lp,lq)
+print(f'ESS = {ess:.4f}')
+```
+
+This in general can be much smaller then the values from the plot above.
+
+
+#### Free energy
+
+
+After that we can estimate the variational free energy
+
+
+$$F_{q}=\int\text{d}u\, q(u) \left(\log q(u)+ S(u)\right) \approx \frac{1}{N}\sum_{i=1}^N\left(\log q(u_i) + S(u_i)\right)\qquad u_i\sim q(u_i)$$
+
+
+where notation $u_i\sim q(u_i)$ means that $u_i$ was generated with probability $u_i$. 
+
+```{python}
+F_q = torch.mean(lq-lp)
+print(f"F_q = {F_q:.2f}")
+```
+
+Variational free energy $F_q$ is a biased estimator of $F$ and  is always greater or equal then real free energy $F$, but bear in mind that this relation does not have to be fulfilled by the $F_q$ calculated on a finite sample.
+
+
+We can obtain a non-biased estimator of $Z$ by using neural importance sampling (NIS)
+
+
+$$Z = \int\text{d}u\, e^{-S(u)} = \int\text{d}u\, q(u) \frac{e^{-S(u)}}{q(u)}\approx \frac{1}{N}\sum_{1}^N w(u_i)\qquad u_i \sim q(u_i)$$
+
+
+where 
+
+
+$$w(u_i)=\frac{-S(u_i)}{q(u_i)}$$
+
+
+are the so called unnormalized  _importance weights_.
+
+```{python}
+lw = lp-lq
+F_nis =-(torch.logsumexp(lw,0)-np.log(len(lw)))
+```
+
+```{python}
+F_q-F_nis
+```
+
+We can also check how the probability  $q(u)$ realized by the model compares to the true probabilitu $p(u)$
+
+```{python}
+r = scipy.stats.linregress(lp, lq)
+```
+
+```{python}
+fig, ax = plt.subplots(figsize=(6,6))
+ax.set_aspect(1)
+lps = np.linspace(lp.min(), lp.max(),100)
+ax.plot(lps, r.slope*lps+r.intercept,'-r')
+ax.scatter(lp, lq,s=2,alpha=0.25);
+plus = '+' if r.intercept>0 else ''
+ax.text(0.1,0.8,f"{r.slope:.2f}x{plus}{r.intercept:.2f}",transform=ax.transAxes)
+ax.set_xlabel('$\log P(u)$')
+ax.set_ylabel('$\log q(u)$')
+```
+
+For a perfectly trained model all points should lie on the straight line 
+
+
+$$\log q(u)=  \log p(u) = \log P(u)-\log Z$$
+
+
+## Neural Markov Chain Monte-Carlo
+
+```{python}
+from monte_carlo.nmcmc import metropolize
+```
+
+```{python}
+u_p, s_p, s_q, accepted = metropolize(u, lq, lp)
+```
+
+```{python}
+print("Accept rate:", utils.grab(accepted).mean())
+```
+
+```{python}
+Q = utils.grab(u1.topo_charge(u_p))
+plt.figure(figsize=(5,3.5), dpi=125)
+plt.plot(Q)
+plt.xlabel(r'$t_{MC}$')
+plt.ylabel(r'topological charge $Q$')
+plt.show()
+```
+
+```{python}
+from utils.stats_utils import bootstrap
+```
+
+```{python}
+X_mean, X_err = bootstrap(Q**2, n_samples=100, binsize=16)
+print(f'Topological susceptibility = {X_mean:.2f} +/- {X_err:.2f}')
+```
+
+```{python}
+# %%time
+sig =  sch.calc_sig(u_p,kappa=kappa,batch_size=128,device=torch_device,float_dtype=torch.complex128 )
+```
+
+```{python}
+plt.plot(sig);
+```
+
+## Chiral condensate
+
+```{python}
+from utils.calc_function import calc_function
+```
+
+```{python}
+# %%time
+cond =  sch.calc_condensate(u_p[:2**14],kappa=kappa,batch_size=128,device=torch_device,float_dtype=torch.complex128 )
+```
+
+```{python}
+cond.mean()
+```
+
+```{python}
+cond.std()
+```
+
+```{python}
+plt.plot(cond.cpu());
+```
+
+### Autocorelation time
+
+```{python}
+from utils.stats_utils import ac_and_tau_int
+```
+
+```{python}
+
+```
+
+```{python}
+tau,ac = ac_and_tau_int(utils.grab(cond))
+tau
+```
+
+```{python}
+plt.plot(ac);
+```
+
+## References
+
+
+1. M.S. Albergo et all.," Flow-based sampling in the lattice Schwinger model at criticality" Phys. Rev. __D106__ (2022) 014514.  

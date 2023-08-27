@@ -1,0 +1,250 @@
+---
+jupyter:
+  jupytext:
+    text_representation:
+      extension: .Rmd
+      format_name: rmarkdown
+      format_version: '1.2'
+      jupytext_version: 1.15.0
+  kernelspec:
+    display_name: Python 3 (ipykernel)
+    language: python
+    name: python3
+---
+
+```{python}
+# %load_ext autoreload
+# %autoreload 2
+```
+
+# $\phi^4$ model
+
+
+$\newcommand{\bphi}{\mathbf{\phi}}$
+\begin{equation}
+\begin{split}
+    S_{P_1}(\bphi|m^2,\lambda) &= \frac{1}{2}\sum_{i,j=0}^{L-1}
+    \left( 
+    (\phi_{i,j}^2-\phi_{i+1,j} \phi_{i,j}) + (\phi_{i,j}^2-\phi_{i,j+1} \phi_{i,j})\right)\\
+    &\phantom{=}+\sum_{i,j=0}^{L-1}\left(\frac{m^2}{2}\phi_{i,j}^2+\frac{\lambda}{4!}\phi_{i,j}^4\right),
+\end{split}    
+\end{equation}
+
+
+which is equal to
+
+
+$\newcommand{\bphi}{\mathbf{\phi}}$
+\begin{equation}
+\begin{split}
+    S_{P_1}(\bphi|m^2,\lambda) &= \frac{1}{2}\sum_{i,j=0}^{L-1}
+    \left( 
+    (\phi_{i+1,j}-\phi_{i,j})^2 + (\phi_{i,j+1}-\phi_{i,j})^2\right)\\
+    &\phantom{=}+\sum_{i,j=0}^{L-1}\left(\frac{m^2}{2}\phi_{i,j}^2+\frac{\lambda}{4!}\phi_{i,j}^4\right),
+\end{split}    
+\end{equation}
+
+
+## Free field ($\lambda = 0$)
+
+
+$$
+F = -\log Z = -\frac{1}{2}L^2\log(2\pi)+\frac{1}{2}\sum_{q_0,q_1=0}^{L-1}\log\left(4 \sum_{m=0}^1 \sin\left(\frac{\pi}{L}q_\mu\right)^2+m^2)\right)
+$$
+
+```{python}
+import time
+```
+
+```{python}
+import torch
+import numpy as np
+
+import matplotlib.pyplot as plt
+```
+
+```{python}
+import normalizing_flow.flow as nf 
+import phys_models.phi4 as phi4
+from utils.stats_utils import torch_bootstrapf, torch_bootstrapo
+```
+
+```{python}
+def grab(var):
+    return var.detach().cpu().numpy()
+```
+
+```{python}
+from utils import metrics
+```
+
+```{python}
+if torch.cuda.is_available():
+    torch_device = f"cuda"
+else:    
+    torch_device = 'cpu'
+print(torch_device)    
+```
+
+```{python}
+L = 12
+lattice_shape = (L,L)
+```
+
+```{python}
+M2  = 1.0
+lam = 0.0
+phi4_action =  phi4.ScalarPhi4Action(M2=M2,lam=lam)
+```
+
+```{python}
+prior = nf.SimpleNormal(torch.zeros(lattice_shape).to(device=torch_device), torch.ones(lattice_shape).to(device=torch_device))
+```
+
+```{python}
+from normalizing_flow.affine_couplings import make_phi4_affine_layers
+```
+
+```{python}
+n_layers = 16
+hidden_channels = [16,16,16]
+kernel_size = 3
+layers = make_phi4_affine_layers(lattice_shape=lattice_shape, n_layers=n_layers, hidden_channels=hidden_channels, kernel_size=kernel_size, device=torch_device)
+model = {'layers' :  layers, 'prior': prior}
+```
+
+```{python}
+phi, log_q_phi = nf.apply_flow_to_prior(prior,layers, batch_size=2**10)
+```
+
+```{python}
+phi.shape
+```
+
+```{python}
+z = prior.sample_n(batch_size=2*10)
+log_z = prior.log_prob(z)
+```
+
+```{python}
+phi, log_q_phi = nf.apply_flow(layers, z, log_z)
+phi.shape
+```
+
+```{python}
+log_q_phi
+```
+
+```{python}
+zz,_ = nf.reverse_apply_flow(layers, phi, log_q_phi)
+```
+
+```{python}
+torch.linalg.norm(z-zz)
+```
+
+```{python}
+phiphi, log_q_phiphi = nf.apply_flow(layers,zz, log_z)
+```
+
+```{python}
+torch.linalg.norm(phiphi-phi)
+```
+
+```{python}
+torch.linalg.norm(log_q_phi-log_q_phiphi)
+```
+
+```{python}
+from training.train import train_step
+from training.loss import rt_loss, REINFORCE_loss
+```
+
+```{python}
+optimizer = torch.optim.Adam(model['layers'].parameters(), lr=0.001)
+scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer,milestones=[1000, 2000,3000,4000], gamma=0.4)
+```
+
+```{python}
+N_era = 5
+N_epoch = 100
+print_freq = N_epoch
+batch_size = 2**10
+
+history = {
+'loss' : [],
+'ess' : [],    
+'dkl':[],
+'std_dkl':[]    
+}
+```
+
+## $\phi^4$ potential
+
+```{python}
+M2  = -1.
+lam = 12
+phi4_action =  phi4.ScalarPhi4Action(M2=M2,lam=lam)
+```
+
+```{python}
+phi_zero = 0 if M2>=0 else np.sqrt(-12*M2/lam)
+xs = np.linspace(-1.1*phi_zero,1.1*phi_zero,500)
+plt.plot(xs, 0.5*M2*xs**2+lam/24*xs**4);
+```
+
+## Training
+
+```{python}
+start_time = time.time()
+era_start_time = start_time
+for era in range(N_era):
+    print(era)
+    ess = 0.0
+    for epoch in range(N_epoch):
+        mtrcs = train_step(model=model, action=phi4_action, loss_fn=REINFORCE_loss, optimizer=optimizer, batch_size=batch_size, scheduler=None, use_amp=False)
+        metrics.add_metrics(history, mtrcs)
+    metrics_avg = metrics.average_metrics(history=history, avg_last_N_epochs=N_epoch,keys = history.keys())    
+    metrics.print_dict(metrics_avg)
+    t = time.time()
+    ellapsed_time =   t-start_time
+    era_duration = t - era_start_time
+    print(f"ellapsed time = {ellapsed_time:.2f}s era duration = {era_duration:.2f}s")
+    era_start_time = t
+```
+
+## Free energy
+
+```{python}
+if M2>0:
+    F_exact = phi4.Free_field_free_energy(L,M2)
+u, lq = nf.sample(batch_size=batch_size, n_samples=2**16, prior=prior, layers=layers)
+lp = -phi4_action(u)
+lw = lp - lq
+F_q, F_q_std = torch_bootstrapf(lambda x: -torch.mean(x), lw, n_samples=100, binsize=16)
+
+
+F_nis, F_nis_std = torch_bootstrapf(lambda x: -(torch.special.logsumexp(x, 0) - np.log(len(x))), lw,
+                                    n_samples=100,
+                                    binsize=16)
+if lam==0.0:
+    print(f"Variational free energy = {F_q:.2f}+/-{F_q_std:.3f} diff = {F_q-F_exact:.3f}")
+    print(f"NIS free energy = {F_nis:.2f}+/-{F_nis_std:.3f} diff = {F_nis-F_exact:.3f}")
+else:
+    print(f"Variational free energy = {F_q:.2f}+/-{F_q_std:.3f}")
+    print(f"NIS free energy = {F_nis:.2f}+/-{F_nis_std:.3f}")
+```
+
+## Magnetisation^2
+
+```{python}
+torch.mean(u.sum(dim=(1,2))**2/(L*L))
+```
+
+```{python}
+print(u'<m^2> = {:.3f}\u00b1{:.4f}'.format(*torch_bootstrapo(lambda x: torch.sum(x,dim=(1,2))**2/(L*L),u, n_samples=100, binsize=16, logweights=lw) ))
+```
+
+```{python}
+
+```

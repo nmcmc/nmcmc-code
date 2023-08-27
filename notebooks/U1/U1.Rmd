@@ -1,0 +1,450 @@
+---
+jupyter:
+  jupytext:
+    text_representation:
+      extension: .Rmd
+      format_name: rmarkdown
+      format_version: '1.2'
+      jupytext_version: 1.15.0
+  kernelspec:
+    display_name: Python 3 (ipykernel)
+    language: python
+    name: python3
+---
+
+```{python}
+# %load_ext autoreload
+# %autoreload 2
+```
+
+```{python}
+import base64
+import io
+import pickle
+import torch
+import numpy as np
+
+import matplotlib.pyplot as plt    
+```
+
+```{python}
+torch.__version__
+```
+
+```{python}
+from scipy.special import iv
+from scipy.stats import linregress
+```
+
+```{python}
+from normalizing_flow import rational_splines_u1 as rs    
+from utils import grab
+import normalizing_flow.u1_equivariant as equiv
+import normalizing_flow.non_compact_projection  as ncp
+import normalizing_flow.circular_splines_equivariant_couplings as cs
+from normalizing_flow.gauge_equivariant import make_u1_nc_model
+```
+
+```{python}
+torch.cuda.is_available()
+```
+
+```{python}
+for dev in range(torch.cuda.device_count()):
+    print(torch.cuda.get_device_properties(dev))
+```
+
+```{python}
+torch_device="cuda:0"
+float_dtype="float32"
+```
+
+```{python}
+torch.cuda.get_device_properties(torch_device)
+```
+
+```{python}
+batch_size = 1024
+```
+
+```{python}
+import phys_models.U1 as u1
+import normalizing_flow.flow as nf
+```
+
+## Tests
+
+
+Some "sanity tests".
+
+```{python}
+L = 8
+lattice_shape = (L,L)
+link_shape = (2,L,L)
+# some arbitrary configurations
+u1_ex1 = 2*np.pi*np.random.random(size=link_shape).astype(float_dtype)
+u1_ex2 = 2*np.pi*np.random.random(size=link_shape).astype(float_dtype)
+cfgs = torch.from_numpy(np.stack((u1_ex1, u1_ex2), axis=0)).to(torch_device)
+```
+
+```{python}
+beta = 1
+u1_action = u1.U1GaugeAction(beta)
+```
+
+```{python}
+# action is invariant
+cfgs_transformed = u1.random_gauge_transform(cfgs, device=torch_device)
+print(u1_action(cfgs), 'vs', u1_action(cfgs_transformed))
+assert np.allclose(grab(u1_action(cfgs)), grab(u1_action(cfgs_transformed)),1e-5), \
+    'gauge transform should be a symmetry of the action'
+```
+
+```{python}
+np.abs(grab(u1.compute_u1_2x1_loops(cfgs))-grab(u1.compute_u1_2x1_loops(cfgs_transformed))).mean()
+```
+
+```{python}
+with np.printoptions(suppress=True):
+    print(f'cfg topological charges = {grab(u1.topo_charge(cfgs))}')
+Q = grab(u1.topo_charge(cfgs))
+assert np.allclose(Q, np.around(Q), atol=1e-5), 'topological charge must be an integer'
+```
+
+```{python}
+prior = u1.MultivariateUniform(torch.zeros(link_shape), 2*np.pi*torch.ones(link_shape), device=torch_device)
+```
+
+```{python}
+z = prior.sample_n(17)
+print(f'z.shape = {z.shape}')
+print(f'log r(z) = {grab(prior.log_prob(z))}')
+```
+
+## Free energy
+
+```{python}
+F=-u1.logZ(L,beta)-2*L*L*np.log(2*np.pi)
+print(F)
+```
+
+```{python}
+# Model
+prior = u1.MultivariateUniform(torch.zeros(link_shape), 2*np.pi*torch.ones(link_shape), device=torch_device).to(torch_device)
+
+n_layers = 16
+n_s_nets = 2
+hidden_sizes = [8,8]
+kernel_size = 3
+```
+
+## NCP coupling
+
+```{python}
+
+
+model = make_u1_nc_model(n_mixture_comps=6, lattice_shape=lattice_shape, n_layers=8,
+                             hidden_sizes=hidden_sizes, kernel_size=kernel_size, float_dtype='float32', dilation=1, device=torch_device, verbose=1)
+pior = model['prior']
+layers = model['layers']
+
+# Training
+base_lr = .001
+optimizer = torch.optim.Adam(model['layers'].parameters(), lr=base_lr)
+#optimizer = to
+```
+
+```{python}
+N_era = 6
+N_epoch = 50
+print_freq = N_epoch # epochs
+plot_freq = 5 # epochs
+
+history = {
+    'dkl' : [],
+    'std_dkl': [],
+    'loss' : [],
+    'ess' : []
+}
+```
+
+```{python}
+from training.train import train_step
+from training.loss import REINFORCE_loss, rt_loss
+from utils.metrics import add_metrics
+
+```
+
+```{python}
+from utils.live_plot import init_live_plot, update_plots
+import utils.metrics as um
+import time
+```
+
+```{python}
+# %%time
+[plt.close(plt.figure(fignum)) for fignum in plt.get_fignums()] # close all existing figures
+live_plot = init_live_plot(N_era, N_epoch)
+start_time = time.time()
+
+for era in range(N_era):
+    for epoch in range(N_epoch):
+        m=train_step(use_amp=True, model=model, action=u1_action, loss_fn=rt_loss, batch_size=batch_size, optimizer=optimizer)
+        um.add_metrics(history, m)
+        
+        if (epoch+1) % print_freq == 0:
+            avg = um.average_metrics(history, N_epoch, history.keys())
+            ellapsed_time = time.time()-start_time
+            print(f"Era {era:3d} epoch {epoch:4d} ellapsed time {ellapsed_time:.1f}")
+            um.print_dict(avg)
+
+
+        if (epoch+1) % plot_freq == 0:
+            update_plots(history, **live_plot)
+
+```
+
+```{python}
+u,lq = nf.sample(batch_size=512,n_samples=2**12, prior=prior, layers=layers)
+```
+
+```{python}
+lp = -nf.calc_action(u,batch_size=1024, action=u1_action, device=torch_device)
+```
+
+```{python}
+u.shape
+```
+
+```{python}
+lw=lp-lq
+```
+
+```{python}
+F_eff = nf.calc_dkl(lp,lq)
+print(F_eff)
+```
+
+```{python}
+(F-F_eff)/F
+```
+
+```{python}
+F_w =-(torch.logsumexp(lw,0)-np.log(len(lw)))
+```
+
+```{python}
+(F_w-F)/F
+```
+
+```{python}
+nf.compute_ess(lp,lq)
+```
+
+```{python}
+r = linregress(lp, lq)
+```
+
+```{python}
+fig, ax = plt.subplots(figsize=(6,6))
+ax.set_aspect(1)
+lps = np.linspace(lp.min(), lp.max(),100)
+ax.plot(lps, r.slope*lps+r.intercept,'-r')
+ax.scatter(lp, lq,s=2,alpha=0.25);
+plus = '+' if r.intercept>0 else ''
+ax.text(0.1,0.8,f"{r.slope:.2f}x{plus}{r.intercept:.2f}",transform=ax.transAxes)
+```
+
+```{python}
+from monte_carlo.nmcmc import metropolize
+```
+
+```{python}
+u_p, s_p, s_q, accepted = metropolize(u, lq, lp)
+```
+
+```{python}
+print("Accept rate:", grab(accepted).mean())
+```
+
+```{python}
+Q = grab(u1.topo_charge(u_p))
+plt.figure(figsize=(5,3.5), dpi=125)
+plt.plot(Q)
+plt.xlabel(r'$t_{MC}$')
+plt.ylabel(r'topological charge $Q$')
+plt.show()
+```
+
+```{python}
+from utils.stats_utils import bootstrap
+```
+
+```{python}
+X_mean, X_err = bootstrap(Q**2, n_samples=100, binsize=16)
+print(f'Topological susceptibility = {X_mean:.2f} +/- {X_err:.2f}')
+print(f'... vs HMC estimate = 1.23 +/- 0.02')
+```
+
+
+[59]:
+￼
+## Rational splines coupling
+
+```{python}
+i=0
+n_knots = 9 
+mu = i % 2
+off = (i // 2) % 4
+in_channels = 2  # x - > (cos(x), sin(x))
+out_channels = 3 * (n_knots - 1) + 1
+net = nf.make_conv_net(
+    in_channels=in_channels,
+    out_channels=out_channels,
+    hidden_sizes=hidden_sizes,
+    kernel_size=kernel_size,
+    use_final_tanh=True,
+)
+net.to(device=torch_device)
+plaq_coupling = cs.GenericRSPlaqCouplingLayer(
+    n_knots=n_knots, net=net, masks=[equiv.make_plaq_masks(mask_shape=lattice_shape, mask_mu=mu, mask_off=off, device=torch_device)], device=torch_device)
+
+```
+
+```{python}
+layers = cs.make_u1_equiv_layers_rs_with_2x1_loops(n_knots=n_knots, lattice_shape=lattice_shape, n_layers=n_layers,
+                             hidden_sizes=hidden_sizes, kernel_size=kernel_size, float_dtype="float32",
+                             device=torch_device)
+
+u1.set_weights(layers)
+model = {'layers': layers, 'prior': prior}
+model['layers'].to(torch_device)
+# Training
+base_lr = .001
+optimizer = torch.optim.Adam(model['layers'].parameters(), lr=base_lr)
+#optimizer = to
+```
+
+```{python}
+layers, prior = model['layers'], model['prior']
+torch_x, torch_logq = nf.apply_flow_to_prior(prior, layers, batch_size=1024)
+```
+
+```{python}
+torch_x.shape
+```
+
+```{python}
+torch_logq
+```
+
+```{python}
+N_era = 6
+N_epoch = 50
+print_freq = N_epoch # epochs
+plot_freq = 1 # epochs
+
+history_rs = {
+    'dkl' : [],
+    'std_dkl': [],
+    'loss' : [],
+    'ess' : []
+}
+```
+
+```{python}
+# %%time
+[plt.close(plt.figure(fignum)) for fignum in plt.get_fignums()] # close all existing figures
+live_plot = init_live_plot(N_era, N_epoch)
+start_time = time.time()
+
+for era in range(N_era):
+    for epoch in range(N_epoch):
+        m=train_step(use_amp=True, model=model, action=u1_action, loss_fn=REINFORCE_loss, batch_size=batch_size, optimizer=optimizer)
+        um.add_metrics(history_rs, m)
+        
+        if (epoch+1) % print_freq == 0:
+            avg = um.average_metrics(history_rs, N_epoch, history.keys())
+            ellapsed_time = time.time()-start_time
+            print(f"Era {era:3d} epoch {epoch:4d} ellapsed time {ellapsed_time:.1f}")
+            um.print_dict(avg)
+
+
+        if (epoch+1) % plot_freq == 0:
+            update_plots(history_rs, **live_plot)
+
+
+```
+
+```{python}
+u,lq = nf.sample(batch_size=1024,n_samples=2**12, prior=prior, layers=layers)
+```
+
+```{python}
+lp = -nf.calc_action(u,batch_size=1024, action=u1_action, device=torch_device)
+```
+
+```{python}
+lw=lp-lq
+```
+
+```{python}
+F_eff = nf.calc_dkl(lp,lq)
+print(F_eff)
+```
+
+```{python}
+(F-F_eff)/F
+```
+
+```{python}
+F_w =-(torch.logsumexp(lw,0)-np.log(len(lw)))
+```
+
+```{python}
+(F_w-F)/F
+```
+
+```{python}
+nf.compute_ess(lp,lq)
+```
+
+```{python}
+r = linregress(lp, lq)
+```
+
+```{python}
+fig, ax = plt.subplots(figsize=(6,6))
+ax.set_aspect(1)
+lps = np.linspace(lp.min(), lp.max(),100)
+ax.plot(lps, r.slope*lps+r.intercept,'-r')
+ax.scatter(lp, lq,s=2,alpha=0.25);
+plus = '+' if r.intercept>0 else ''
+ax.text(0.1,0.8,f"{r.slope:.2f}x{plus}{r.intercept:.2f}",transform=ax.transAxes)
+```
+
+```{python}
+from monte_carlo.nmcmc import metropolize
+```
+
+```{python}
+u_p, s_p, s_q, accepted = metropolize(u, lq, lp)
+```
+
+```{python}
+print("Accept rate:", grab(accepted).mean())
+```
+
+```{python}
+Q = grab(u1.topo_charge(u_p))
+plt.figure(figsize=(5,3.5), dpi=125)
+plt.plot(Q)
+plt.xlabel(r'$t_{MC}$')
+plt.ylabel(r'topological charge $Q$')
+plt.show()
+```
+
+```{python}
+X_mean, X_err = bootstrap(Q**2, n_samples=100, binsize=16)
+print(f'Topological susceptibility = {X_mean:.2f} +/- {X_err:.2f}')
+```
