@@ -121,6 +121,27 @@ def make_conv_net(*, in_channels, hidden_sizes, out_channels, kernel_size, use_f
 
 
 def sample(n_samples, batch_size, prior, layers):
+    """Sample from a normalizing flow
+
+    Generates the samples from prior distributions and transforms them using the normalizing flow.
+    The samples are generated in batches of size batch_size to reduce memory usage on the GPU.
+    Samples are stored in the CPU memory.
+
+    Parameters
+    ----------
+    n_samples
+        number of samples to generate
+    batch_size
+        number of samples to generate at a time
+    prior
+        distribution to sample prior configurations from
+    layers
+        normalizing flow layers
+    Returns
+    -------
+        generated samples and the log probability of the generated samples
+    """
+
     rem_size = n_samples
     samples = []
     log_q = []
@@ -138,19 +159,80 @@ def sample(n_samples, batch_size, prior, layers):
 
 
 def calc_dkl(logp, logq):
+    """Calculate the Kullback-Leibler divergence D(q|p) between two distributions
+    given the log probabilities of samples from each distribution
+
+    Parameters
+    ----------
+    logp
+        logarithm of the target probability of samples
+    logq
+        logarithm of the proposal probability of samples
+    Returns
+    -------
+        Kullback-Leibler divergence D(q|p)
+    """
+
     return (logq - logp).mean()
 
 
 def compute_ess_lw(logw):
+    """Compute the effective sample size
+
+    Parameters
+    ----------
+    logw
+        log of (unnormalized) importance weights
+
+    Returns
+    -------
+        effective sample size
+    """
+
     log_ess = 2 * torch.logsumexp(logw, dim=0) - torch.logsumexp(2 * logw, dim=0)
     ess_per_cfg = torch.exp(log_ess) / len(logw)
     return ess_per_cfg
 
 
 def compute_ess(logp, logq):
+    """
+    Compute the effective sample size
+
+    Parameters
+    ----------
+    logp
+        logarithm of the target probability of samples
+    logq
+        logarithm of the proposal probability of samples
+    Returns
+    -------
+        effective sample size
+    """
+
     logw = logp - logq
     return compute_ess_lw(logw)
 
 
 def calc_action(cfgs, *, action, batch_size, device):
+    """Calculate the value of the action of on a  set of configurations
+
+    see the utils.calc_function.calc_function function for more details
+
+    Parameters
+    ----------
+    cfgs
+        configurations on which to evaluate the function
+    action
+        action to evaluate
+    batch_size
+        size of the batches to use for the calculation
+    device
+
+    kwargs
+        additional keyword arguments to pass to the function
+    Returns
+    -------
+        values of the function on the configurations
+    """
+
     return calc_function(cfgs, function=action, batch_size=batch_size, device=device)
