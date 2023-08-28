@@ -12,14 +12,22 @@ def make_sin_cos(x):
     """Takes a 3 or 4 dimensional tensor and returns a 4 dimensional tensor that contains the cos and sin of the
     input concatenated along the dimension 1. If the input is 3 dimensional then dimension 1 is inserted into output.
 
+    Parameters
+    ----------
+    x
+        A tensor of shape (batch_size, channels, L, L) or (batch_size, L, L).
+    Returns
+        Returns a tensor of shape (batch_size, 2 * channels, L, L) or (batch_size, 2, L, L) with cos(x) and sin(x).
+    -------
     """
+
     if x.dim() == 3:
         return torch.stack((torch.cos(x), torch.sin(x)), dim=1)
     elif x.dim() == 4:
         return torch.cat((torch.cos(x), torch.sin(x)), dim=1)
 
 
-def prepare_u1_input(plaq, plaq_mask, loops=(), loops_masks=()):
+def _prepare_u1_input(plaq, plaq_mask, loops=(), loops_masks=()):
     p2 = plaq_mask['frozen'] * plaq
     net_in = [make_sin_cos(p2)]
     for i, l in enumerate(loops):
@@ -29,7 +37,27 @@ def prepare_u1_input(plaq, plaq_mask, loops=(), loops_masks=()):
 
 
 class GenericRSPlaqCouplingLayer(torch.nn.Module):
+    """Transform the plaquettes `x` using the circular splines transformation.
+
+    See https://arxiv.org/abs/2002.02428 for more details.
+    """
+
     def __init__(self, *, n_knots, net, masks, device):
+        """
+
+        Parameters
+        ----------
+        n_knots
+            Number of knots in the spline. Because in circular splines the first and the last knot are the same
+            the real number of knots is n_knots - 1.
+        net
+            neural network that computes the parameters of the splines
+        masks
+            list of masks used for masking the plaquettes and optionally other loops
+        device
+            device on which the computation is performed
+        """
+
         super().__init__()
         self.n_knots = n_knots
         self.n_bins = n_knots - 1
@@ -40,7 +68,27 @@ class GenericRSPlaqCouplingLayer(torch.nn.Module):
         self.device = device
 
     def call(self, x, dir, *loops):
-        net_in = prepare_u1_input(x, self.plaq_mask, loops, self.loop_masks)
+        """Transform the plaquettes `x` using the circular splines transformation.
+
+        The parameters of the transformation are given by the neural network `net`.
+        The input to the network is the plaquette `x` and optionally the loops `loops`.
+        The plaquettes are masked using self.plaq_mask and the loops are masked using self.loop_masks.
+
+        Parameters
+        ----------
+        x
+            A tensor of shape (batch_size, L, L) containing plaquettes.
+        dir
+            Direction of the transformation. 0 for forward and 1 for reverse.
+        loops
+            Optional loops to be used as input to the neural network.
+
+        Returns
+        -------
+            A tuple of transformed plaquettes and the log of the Jacobian of the transformation.
+        """
+
+        net_in = _prepare_u1_input(x, self.plaq_mask, loops, self.loop_masks)
 
         net_out = self.net(net_in)
 
@@ -54,7 +102,6 @@ class GenericRSPlaqCouplingLayer(torch.nn.Module):
         w, h, d = torch.softmax(w, 1), torch.softmax(h, 1), self.softplus(d)
 
         kx, ky, s = rs.make_circular_knots_array(w, h, d, device=self.device)
-
         bs = rs.make_bs(x.shape[0], self.n_knots, x.shape[1:], device=self.device)
         spline = rs.make_splines_array(kx, ky, s, bs)[dir]
 
@@ -84,7 +131,36 @@ class GenericRSPlaqCouplingLayer(torch.nn.Module):
 
 def make_u1_equiv_layers_rs(
         *, n_layers, n_knots, lattice_shape, hidden_sizes, kernel_size, dilation=1, float_dtype, device):
-    def make_plaq_coupling(mask):
+    """Make a list of equivariant layers that transform the links using the circular splines transformation for plaquettes.
+
+    The masking pattern as described in https://arxiv.org/abs/2003.06413 is used.
+
+    Parameters
+    ----------
+    n_layers
+        Number of layers.
+    n_knots
+        Number of knots in the spline. Because in circular splines the first and the last knot are the same
+        the real  number of knots is n_knots - 1.
+    lattice_shape
+        Shape of the lattice.
+    hidden_sizes
+        Number of channels in the hidden layers of the neural network.
+    kernel_size
+        Kernel size of the convolutional layers in the neural network.
+    dilation
+        A list of dileations for the convolutional layers in the neural network.
+        If an integer is given then the same dilation is used for all layers.
+    float_dtype
+        Type of the floating point numbers used in the computation.
+    device
+        Device on which the computation is performed.
+
+    Returns
+    -------
+        Torch module containing a list of equivariant layers.
+    """
+    def _make_plaq_coupling(mask):
         in_channels = 2  # x - > (cos(x), sin(x))
         out_channels = 3 * (n_knots - 1) + 1
         net = make_conv_net(
@@ -105,12 +181,42 @@ def make_u1_equiv_layers_rs(
     masks = equiv.u1_masks(plaq_mask_shape=lattice_shape, link_mask_shape=link_mask_shape, float_dtype=float_dtype,
                            device=device)
 
-    return equiv.make_u1_equiv_layers(make_plaq_coupling=make_plaq_coupling, masks=masks, n_layers=n_layers,
+    return equiv.make_u1_equiv_layers(make_plaq_coupling=_make_plaq_coupling, masks=masks, n_layers=n_layers,
                                       device=device)
 
 
 def make_u1_equiv_layers_rs_with_2x1_loops(
         *, n_layers, n_knots, lattice_shape, hidden_sizes, kernel_size, dilation=1, float_dtype, device):
+    """Make a list of equivariant layers that transform the links using the circular splines transformation for plaquettes.
+
+        The masking pattern as described in http://arxiv.org/abs/2202.11712  and https://arxiv.org/abs/2308.13294
+        is used together with 2x1 Wilson loops.
+
+        Parameters
+        ----------
+        n_layers
+            Number of layers.
+        n_knots
+            Number of knots in the spline. Because in circular splines the first and the last knot are the same
+            the real  number of knots is n_knots - 1.
+        lattice_shape
+            Shape of the lattice.
+        hidden_sizes
+            Number of channels in the hidden layers of the neural network.
+        kernel_size
+            Kernel size of the convolutional layers in the neural network.
+        dilation
+            A list of dileations for the convolutional layers in the neural network.
+            If an integer is given then the same dilation is used for all layers.
+        float_dtype
+            Type of the floating point numbers used in the computation.
+        device
+            Device on which the computation is performed.
+
+        Returns
+        -------
+            Torch module containing a list of equivariant layers.
+        """
     def make_plaq_coupling(mask):
         in_channels = 6
         out_channels = 3 * (n_knots - 1) + 1

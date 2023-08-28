@@ -3,20 +3,27 @@ import typing
 import numpy as np
 import torch
 
-
-
 from phys_models.U1 import compute_u1_plaq, torch_mod
 
 
 class GenericGaugeEquivCouplingLayer(torch.nn.Module):
-    """A generic gauge equivariant coupling layer for U(1) gauge theory."""
+    """A generic gauge equivariant link coupling layer for U(1) gauge theory.
+
+    Enables a gauge equivariant transformation of the links. Given a link configuration forward pass calculates
+    the plaquettes and optionally other gauge invariant loops. Those are passed to the plaquette coupling layer
+    which transforms the plaquettes. The transformed plaquettes are then used to transform the links.
+    The probability of the transformed links is calculated using the Jacobian of the transformation.
+
+    The reverse  pass reverses the transformation of the links.
+
+    See https://arxiv.org/abs/2003.06413 for more details.
+    """
 
     def __init__(self, *, active_links_mask: torch.Tensor,
                  loops_function: typing.Callable[[torch.Tensor], typing.Sequence[torch.Tensor]] = None,
                  plaq_coupling,
                  ):
         """
-
         Parameters
         ----------
         active_links_mask
@@ -24,7 +31,7 @@ class GenericGaugeEquivCouplingLayer(torch.nn.Module):
         loops_function
             A function that computes loops from links. The function takes a tensor of shape (2, L, L)
             and returns a sequence of tensors, each tensor corresponding to a particular set of loops.
-            This allows for adding the dependence on other loops  then plaquettes to the plaquette coupling layer.
+            This allows for adding the dependencies on other loops  then plaquettes to the plaquette coupling layer.
         plaq_coupling
             A coupling layer that operates on plaquettes and loops. It returns a transformed plaquettes and
             the log of the Jacobian of the transformation.
@@ -47,6 +54,7 @@ class GenericGaugeEquivCouplingLayer(torch.nn.Module):
         -------
             Transformed links and the log of the Jacobian of the transformation.
         """
+
         assert torch.all(x < 2 * torch.pi)
         plaq = compute_u1_plaq(x, mu=0, nu=1)
         if self.loops_function:
@@ -66,7 +74,6 @@ class GenericGaugeEquivCouplingLayer(torch.nn.Module):
 
     def reverse(self, fx):
         """Reverse pass of the coupling layer.
-
 
         Parameters
         ----------
@@ -93,14 +100,20 @@ class GenericGaugeEquivCouplingLayer(torch.nn.Module):
 
 def make_u1_equiv_layers(*, make_plaq_coupling, masks, n_layers, device,
                          loops_function=None):
-    """
-    Make a list of `n_layers` of `GenericGaugeEquivCouplingLayer` coupling layers.
+    """ Make a list of `n_layers` of `GenericGaugeEquivCouplingLayer` coupling layers.
+
+    For each layer a tuple of (link_masks, plaq_masks) is taken from the `masks` generator.  `plaq_mask` is passed to
+    `make_plaq_coupling` functionthat generates a  plaquette coupling layer with the given mask.
+    Then the equivalent link coupling layer is created with the given plaquette coupling layer and `link_mask`.
+    The loop function is also passed to the link coupling layer. The output from this function must be compatible with
+    the input of the plaquette coupling layer.
+
     Parameters
     ----------
     make_plaq_coupling
         a function that makes a plaquette coupling layer with given mask
     masks
-        a list or generator of masks for the plaquette coupling layers
+        a list or generator of masks
     n_layers
         number of coupling layers
     device
@@ -212,6 +225,26 @@ def make_plaq_masks(mask_shape, mask_mu, mask_off, device):
 
 
 def u1_masks(*, plaq_mask_shape, link_mask_shape, float_dtype, device):
+    """Generator of masks for U(1) equivariant coupling layers.
+
+    Parameters
+    ----------
+    plaq_mask_shape
+        Shape of the plaquette mask.
+    link_mask_shape
+        Shape of the link mask.
+    float_dtype
+        float type of the masks
+    device
+        device to put the masks on
+
+    Yields
+    -------
+        link_mask
+        plaq_maks
+            Non-empty list. First item on the list is the plaquette mask,
+            the rest are loop masks if present.
+    """
     i = 0
     while True:
         # periodically loop through all arrangements of masks
