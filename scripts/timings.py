@@ -69,6 +69,8 @@ model_cfg = {'n_layers': 48,
 if args.configuration:
     with open(args.configuration) as f:
         cfg = json.load(f)
+else:
+    cfg = {}
 
 model_cfg |= cfg
 
