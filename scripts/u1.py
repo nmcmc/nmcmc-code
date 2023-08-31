@@ -66,8 +66,8 @@ parser.add_argument('--equiv', default='plaq', choices=['plaq', '2x1'],
 parser.add_argument('-b', '--beta', type=float, default='1.0', help='beta')
 parser.add_argument('-lr', '--learning-rate', type=float, default='0.00025',
                     help='Learning rate for the Adam optimizer')
-parser.add_argument('--n-eras', type=int, default='4', help='Number of eras')
-parser.add_argument('--n-epochs-per-era', type=int, default=50, help='Numbers of gradient updates per era')
+parser.add_argument('--n-eras', type=int, default='5', help='Number of eras')
+parser.add_argument('--n-epochs-per-era', type=int, default=100, help='Numbers of gradient updates per era')
 parser.add_argument('--n-samples', type=int, default=2 ** 16, help='Number of samples used for evaluation')
 parser.add_argument('--n-boot-samples', type=int, default=100, help='Number of bootstrap samples')
 parser.add_argument('--bin-size', type=int, default=16, help='Bin size for bootstrap')
@@ -87,8 +87,8 @@ scripts.check_cuda(torch_device)
 if args.verbose:
     scripts.describe_device(torch_device)
 
-if args.coupling == 'ncp' and args.loss == 'RE':
-    print("NCP coupling is not compatible with RE loss")
+if args.coupling == 'ncp' and args.loss == 'REINFORCE':
+    print("NCP coupling is not compatible with REINFORCE loss")
     sys.exit(1)
 
 batch_size = args.batch_size
