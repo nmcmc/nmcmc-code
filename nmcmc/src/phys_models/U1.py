@@ -23,7 +23,7 @@ debug_info = {}
 def logZ(L, beta, *, n=2):
     z = L * L * np.log(iv(0, beta))
     x = np.sum(2 * np.power(iv(np.arange(1, n + 1), beta) / iv(0, beta), L * L))
-    return z + x - x * x / 2
+    return z + x - x * x / 2 + x * x * x / 3
 
 
 def set_weights(m):

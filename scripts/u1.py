@@ -190,7 +190,7 @@ for era in range(args.n_eras):
                 time_remaining = (total_epochs - epochs_done) * time_per_epoch
                 if args.verbose > 0:
                     print(f"  {time_per_epoch:.2f}s/epoch  remaining time {utils.format_time(time_remaining):s}")
-                metrics.print_dict(avg)
+                    metrics.print_dict(avg)
 
 if args.verbose > 0:
     print(f"Elapsed {utils.format_time(elapsed_time)} {elapsed_time / args.n_eras:.2f}s/era")

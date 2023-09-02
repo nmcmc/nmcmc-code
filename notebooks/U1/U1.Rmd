@@ -5,7 +5,7 @@ jupyter:
       extension: .Rmd
       format_name: rmarkdown
       format_version: '1.2'
-      jupytext_version: 1.15.0
+      jupytext_version: 1.15.1
   kernelspec:
     display_name: Python 3 (ipykernel)
     language: python
@@ -13,14 +13,33 @@ jupyter:
 ---
 
 ```{python}
+# Helps with the debuging. The  functions are reloaded each time they are used. 
 # %load_ext autoreload
 # %autoreload 2
 ```
 
+# U(1) Pure gauge model. 
+
+
+$\newcommand{\re}{\operatorname{Re}}
+\newcommand{\im}{\operatorname{Im}}$
+\begin{equation}
+    S(U) = -\beta\sum_{x}\re P(x)
+\end{equation}
+
+
+where $P(x)$ is the plaquette 
+
+
+\begin{equation}
+    P(x)=U_1(x) U_0(x+\hat{1}) U_1^\dagger(x+\hat{0}) U_0^\dagger (x).
+\end{equation}
+
+
+$U_\mu(x)$ is a link starting from $x$ in direction $\mu=0,1$ and $\hat\mu$ is the displacement vector of one lattice site in the direction $\mu$.
+
 ```{python}
 import base64
-import io
-import pickle
 import torch
 import numpy as np
 
@@ -81,7 +100,7 @@ Some "sanity tests".
 L = 8
 lattice_shape = (L,L)
 link_shape = (2,L,L)
-# some arbitrary configurations
+# some arbitrary random configurations configurations
 u1_ex1 = 2*np.pi*np.random.random(size=link_shape).astype(float_dtype)
 u1_ex2 = 2*np.pi*np.random.random(size=link_shape).astype(float_dtype)
 cfgs = torch.from_numpy(np.stack((u1_ex1, u1_ex2), axis=0)).to(torch_device)
@@ -121,29 +140,59 @@ print(f'z.shape = {z.shape}')
 print(f'log r(z) = {grab(prior.log_prob(z))}')
 ```
 
-## Free energy
+# Free energgy
+
+
+The partition function of this model is given by (R. Janik private comminication)
+
+
+$$Z(\beta)=I_0(\beta)^{L^2} + 2\sum_{n=1}^\infty I_n(\beta)^{L^2}$$
+
+
+where $I_n(\beta)$ are incomplete Bessel functions. The logarithm of $Z$ can be written as 
+
+
+$$\log Z(\beta)=
+L^2\log I_0(\beta) + \log\left(
+    1 + 2\sum_{n=1}^\infty \left(\frac{I_n(\beta)}{I_0(\beta)}\right)^{L^2}
+    \right)
+$$
+
+
+This function is  implemented (approximately) in module `phys_models.U1`. 
 
 ```{python}
 F=-u1.logZ(L,beta)-2*L*L*np.log(2*np.pi)
-print(F)
+print(f'Exact F = {F:.4f}')
 ```
 
-```{python}
-# Model
-prior = u1.MultivariateUniform(torch.zeros(link_shape), 2*np.pi*torch.ones(link_shape), device=torch_device).to(torch_device)
+## Prior distrubution 
 
+
+Prior distribution is uniform on interval $[0,2\pi)$.
+
+```{python}
+# Prior
+prior = u1.MultivariateUniform(torch.zeros(link_shape), 2*np.pi*torch.ones(link_shape), device=torch_device).to(torch_device)
+```
+
+## Non-compact projection (NCP) coupling
+
+```{python}
+# Model parameters
+
+#Common model parameters
 n_layers = 16
 n_s_nets = 2
 hidden_sizes = [8,8]
 kernel_size = 3
-```
 
-## NCP coupling
+n_mixture_comps = 6 
+```
 
 ```{python}
 
-
-model = make_u1_nc_model(n_mixture_comps=6, lattice_shape=lattice_shape, n_layers=8,
+model = make_u1_nc_model(n_mixture_comps=n_mixture_comps, lattice_shape=lattice_shape, n_layers=n_layers,
                              hidden_sizes=hidden_sizes, kernel_size=kernel_size, float_dtype='float32', dilation=1, device=torch_device, verbose=1)
 pior = model['prior']
 layers = model['layers']
@@ -292,23 +341,7 @@ print(f'... vs HMC estimate = 1.23 +/- 0.02')
 ## Rational splines coupling
 
 ```{python}
-i=0
 n_knots = 9 
-mu = i % 2
-off = (i // 2) % 4
-in_channels = 2  # x - > (cos(x), sin(x))
-out_channels = 3 * (n_knots - 1) + 1
-net = nf.make_conv_net(
-    in_channels=in_channels,
-    out_channels=out_channels,
-    hidden_sizes=hidden_sizes,
-    kernel_size=kernel_size,
-    use_final_tanh=True,
-)
-net.to(device=torch_device)
-plaq_coupling = cs.GenericRSPlaqCouplingLayer(
-    n_knots=n_knots, net=net, masks=[equiv.make_plaq_masks(mask_shape=lattice_shape, mask_mu=mu, mask_off=off, device=torch_device)], device=torch_device)
-
 ```
 
 ```{python}

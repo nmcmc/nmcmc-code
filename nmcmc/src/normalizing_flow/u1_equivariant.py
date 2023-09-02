@@ -1,4 +1,4 @@
-# This is modified code from https://arxiv.org/abs/2101.08176 by M.S. Albergo et all.
+# Contains modified code from https://arxiv.org/abs/2101.08176 by M.S. Albergo et all.
 import typing
 import numpy as np
 import torch
@@ -168,7 +168,10 @@ def make_2d_link_active_stripes(shape, mu, off, float_dtype, torch_device):
 
 
 def make_single_stripes(shape, mu, off, device):
-    """
+    """Creates a mask with single stripes.
+
+    Single stripes mask looks like:
+
       1 0 0 0 1 0 0 0 1 0 0
       1 0 0 0 1 0 0 0 1 0 0
       1 0 0 0 1 0 0 0 1 0 0
@@ -191,7 +194,8 @@ def make_single_stripes(shape, mu, off, device):
 
 # %%
 def make_double_stripes(shape, mu, off, device):
-    """
+    """Creates a mask with double stripes.
+
     Double stripes mask looks like::
 
       1 1 0 0 1 1 0 0
@@ -216,16 +220,36 @@ def make_double_stripes(shape, mu, off, device):
     return torch.from_numpy(mask).to(device)
 
 
-def make_plaq_masks(mask_shape, mask_mu, mask_off, device):
+def make_plaq_masks(shape, mu, offset, device):
+    """Make a dictionary of masks for plaquettes.
+
+    Parameters
+    ----------
+    shape
+        shape of the mask (lattice shape)
+    mu
+        direction of the stripes
+    offset
+        offset of the stripes in direction perpendicular to mask_mu
+    device
+        device to put the masks on
+
+    Returns
+    -------
+
+    """
+
     mask = {}
-    mask["frozen"] = make_double_stripes(mask_shape, mask_mu, mask_off + 1, device=device)
-    mask["active"] = make_single_stripes(mask_shape, mask_mu, mask_off, device=device)
+    mask["frozen"] = make_double_stripes(shape, mu, offset + 1, device=device)
+    mask["active"] = make_single_stripes(shape, mu, offset, device=device)
     mask["passive"] = 1 - mask["frozen"] - mask["active"]
     return mask
 
 
 def u1_masks(*, plaq_mask_shape, link_mask_shape, float_dtype, device):
     """Generator of masks for U(1) equivariant coupling layers.
+
+    As decribed in https://arxiv.org/abs/2003.06413
 
     Parameters
     ----------
