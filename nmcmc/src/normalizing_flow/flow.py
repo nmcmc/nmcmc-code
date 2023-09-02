@@ -6,29 +6,72 @@ from utils.calc_function import calc_function
 
 
 class SimpleNormal:
-    """Normal prior distribution"""
+    """Normal prior distribution
 
-    def __init__(self, loc, var):
-        self.dist = torch.distributions.normal.Normal(torch.flatten(loc), torch.flatten(var))
+    At each site the distribution is an independent  normal distribution.
+    """
+
+    def __init__(self, loc, std):
+        """
+
+        Parameters
+        ----------
+        loc: torch.Tensor
+            mean of the distribution
+        std: torch.Tensor
+            standard deviation of the distribution
+        """
+        self.dist = torch.distributions.normal.Normal(torch.flatten(loc), torch.flatten(std))
         self.shape = loc.shape
 
     def log_prob(self, x):
+        """Log probability of the distribution  for given configurations
+
+        Parameters
+        ----------
+        x : torch.Tensor
+            configurations
+        Returns
+        -------
+            log probability of the prior distribution for each configuration
+        """
+
         logp = self.dist.log_prob(x.reshape(x.shape[0], -1))
         return torch.sum(logp, dim=1)
 
     def sample_n(self, batch_size):
+        """Generate samples from the distribution
+
+        Parameters
+        ----------
+        batch_size
+            number of samples to generate
+        Returns
+        -------
+            generated samples
+        """
+
         x = self.dist.sample((batch_size,))
         return x.reshape(batch_size, *self.shape)
 
 
 def apply_flow(coupling_layers, z_in, logq_a):
-    """Apply a normalizing flow to prior configurations.
+    """Apply a normalizing flow to configurations.
 
-    :param coupling_layers
-    :param z_in: The input prior configurations
-    :param logq_a: The log probability of the input prior configurations
-    :return:    The transformed configurations and the log probability of the transformed configurations
+    Parameters
+    ----------
+    coupling_layers
+        normalizing flow layers
+    z_in
+        prior configurations
+    logq_a
+        log probability of the prior configurations
+
+    Returns
+    -------
+        Transformed configurations and the log probability of the transformed configurations
     """
+
     logq = torch.zeros_like(logq_a)
     for layer in coupling_layers:
         try:
@@ -93,6 +136,30 @@ def reverse_apply_flow(coupling_layers, phi, logq_a):
 
 def make_conv_net(*, in_channels, hidden_sizes, out_channels, kernel_size, use_final_tanh, dilation=1,
                   float_dtype=torch.float32):
+    """An auxiliary helper function to create a convolutional neural network
+
+
+    Parameters
+    ----------
+    in_channels: int
+        number of input channels
+    hidden_sizes: sequence
+        number of channels in the hidden layers. Sets the number of hidden layers.
+    out_channels
+        number of output channels
+    kernel_size: int
+        kernel size of each convolutional layer
+    use_final_tanh
+        whether to use a tanh activation function at the end of the network
+    dilation: int or sequence
+        dilation of each convolutional layer. If an integer is given then the same dilation is used for all layers.
+    float_dtype
+
+    Returns
+    -------
+        a  convolutional neural network
+
+    """
     sizes = [in_channels] + hidden_sizes + [out_channels]
     net = []
     if isinstance(dilation, int):
