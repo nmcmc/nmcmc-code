@@ -2,15 +2,30 @@ import numpy as np
 import torch
 
 
+def _numpy_block(x, binsize):
+    n_bins = len(x) // binsize
+    xb = np.stack(np.array_split(x, n_bins), axis=0)
+    return xb
+
+
 def block_mean(sample, block_size):
-    n_blocks = len(sample) // block_size
-    if n_blocks == 0:
-        raise RuntimeError("sample shorter then block_size")
-    sample = sample.reshape(n_blocks, block_size, *sample.shape[1:])
-    return sample.mean(1)
+    xb = _numpy_block(sample, block_size)
+    return np.mean(xb, axis=1)
 
 
 def ac(series, history=100):
+    """Autocorrelation function for given series
+
+    Parameters
+    ----------
+    series : array_like
+        Array containing series whose autocorrelation function is to be computed
+    history
+        how much history to use in the autocorrelation function
+    Returns
+    -------
+        Autocorrelation function : ndarray
+    """
     mu = np.mean(series)
     var = np.mean((series - mu) * (series - mu))
     out = np.empty(history)
@@ -59,9 +74,22 @@ def bootstrap(x, *, n_samples, binsize):
     return bootstrapf(lambda x: np.mean(x, 0), x, n_samples=n_samples, binsize=binsize)
 
 
+def _torch_block(x, binsize):
+    xblocks = torch.split(x, binsize, dim=0)
+
+    if len(xblocks[0]) != len(xblocks[-1]):
+        xblocks = xblocks[:-1]
+
+    n_bins = len(xblocks)
+
+    xb = torch.stack(xblocks, dim=0)
+
+    return xb
+
+
 def torch_bootstrapf(f, x, *, n_samples, binsize):
-    n_bins = len(x) // binsize
-    xb = torch.stack(torch.tensor_split(x, n_bins), dim=0)
+    xb = _torch_block(x, binsize)
+    n_bins = len(xb)
 
     boots = []
 
@@ -75,20 +103,19 @@ def torch_bootstrapf(f, x, *, n_samples, binsize):
     return torch.mean(boots, 0), torch.std(boots, 0)
 
 
-def torch_bootstrapo(obs, x, *, n_samples, binsize, logweights=None):
-    obs_ = obs(x)
-    n_bins = len(x) // binsize
-    xb = torch.stack(torch.tensor_split(obs_, n_bins), dim=0)
+def torch_bootstrap_mean(x, *, n_samples, binsize, logweights=None):
+    xb = _torch_block(x, binsize)
+    n_bins = len(xb)
 
     boots = []
     if logweights is not None:
         weights = torch.exp(logweights - torch.max(logweights))
-        bweights = torch.stack(torch.tensor_split(weights, n_bins), dim=0)
+        bweights = _torch_block(weights, binsize)[0]
 
     for i in range(n_samples):
         idx = torch.from_numpy(np.random.choice(n_bins, n_bins))
         bsample = xb[idx].view(
-            (n_bins * binsize, *obs_.shape[1:])
+            (n_bins * binsize, *x.shape[1:])
         )
         if logweights is not None:
             bwsample = bweights[idx].ravel()
@@ -98,3 +125,8 @@ def torch_bootstrapo(obs, x, *, n_samples, binsize, logweights=None):
             boots.append(torch.mean(bsample, 0))
     boots = torch.stack(boots, dim=0)
     return torch.mean(boots, 0), torch.std(boots, 0)
+
+
+def torch_bootstrapo(obs, x, *, n_samples, binsize, logweights=None):
+    obs_ = obs(x)
+    return torch_bootstrap_mean(x=obs_, n_samples=n_samples, binsize=binsize, logweights=logweights)
