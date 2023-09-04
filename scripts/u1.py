@@ -175,8 +175,6 @@ elif args.equiv == 'sch':
         }
         model = make_u1_nc_model(type='sch', **model_cfg, device=torch_device, verbose=args.verbose)
 
-
-
 layers = model['layers']
 prior = model['prior']
 
@@ -211,12 +209,12 @@ for era in range(args.n_eras):
                                       beta=beta, path=f"U1_{args.loss}_{L:02d}x{L:02d}.zip")
             elapsed_time = time.time() - start_time
             avg = metrics.average_metrics(history, args.n_epochs_per_era, history.keys())
-            if args.verbose > 0:
+            if args.verbose > 1:
                 print(f"Finished era {era + 1:d} epoch {epoch + 1:d} elapsed time {elapsed_time:.1f}", end="")
             if epochs_done > 0:
                 time_per_epoch = elapsed_time / epochs_done
                 time_remaining = (total_epochs - epochs_done) * time_per_epoch
-                if args.verbose > 0:
+                if args.verbose > 1:
                     print(f"  {time_per_epoch:.2f}s/epoch  remaining time {utils.format_time(time_remaining):s}")
                     metrics.print_dict(avg)
 
@@ -224,16 +222,18 @@ if args.verbose > 0:
     print(f"Elapsed {utils.format_time(elapsed_time)} {elapsed_time / args.n_eras:.2f}s/era")
 
 if args.n_samples > 0:
-    print(f"Sampling {args.n_samples} configurations")
+    if args.verbose > 0:
+        print(f"Sampling {args.n_samples} configurations")
     F = -u1.logZ(L, beta)
     u, lq = nf.sample(batch_size=batch_size, n_samples=args.n_samples, prior=prior, layers=layers)
     lp = -u1_action(u)
     lw = lp - lq
     F_q, F_q_std = torch_bootstrapf(lambda x: -torch.mean(x), lw, n_samples=args.n_boot_samples, binsize=args.bin_size)
-    print(f"Free energy true={F:.4f} variational={F_q:.4f}+/-{F_q_std:.4f} diff={F_q - F:.4f}")
+    if args.verbose > 0:
+        print(f"Free energy true={F:.4f} variational={F_q:.4f}+/-{F_q_std:.4f} diff={F_q - F:.4f}")
 
     F_nis, F_nis_std = torch_bootstrapf(lambda x: -(torch.special.logsumexp(x, 0) - np.log(len(x))), lw,
                                         n_samples=args.n_boot_samples,
                                         binsize=args.bin_size)
-
-    print(f"Free energy true={F:.4f} NIS={F_nis:.4f}+/-{F_nis_std:.4f} diff={F_nis - F:.4f}")
+    if args.verbose > 0:
+        print(f"Free energy true={F:.4f} NIS={F_nis:.4f}+/-{F_nis_std:.4f} diff={F_nis - F:.4f}")

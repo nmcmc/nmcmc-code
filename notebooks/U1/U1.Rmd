@@ -302,7 +302,6 @@ layers = model['layers']
 # Training
 base_lr = .001
 optimizer = torch.optim.Adam(model['layers'].parameters(), lr=base_lr)
-#optimizer = to
 ```
 
 ```{python}
