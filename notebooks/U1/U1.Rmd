@@ -446,7 +446,7 @@ n_knots = 9
 ```
 
 ```{python}
-layers = cs.make_u1_equiv_layers_rs_with_2x1_loops(n_knots=n_knots, lattice_shape=lattice_shape, n_layers=n_layers,
+layers = cs.make_u1_equiv_layers_rs(type='sch_2x1', n_knots=n_knots, lattice_shape=lattice_shape, n_layers=n_layers,
                              hidden_sizes=hidden_sizes, kernel_size=kernel_size, float_dtype="float32",
                              device=torch_device)
 

@@ -16,26 +16,7 @@ def _print_args(argsinfo):
         print(f"{key} =  {val}")
 
 
-def make_schwinger_model(*, lattice_shape, n_knots, n_layers, hidden_sizes, kernel_size, dilation, float_dtype,
-                         device, verbose=0):
-    if verbose > 0:
-        print(f"Making Gauge equivariant rational splines model")
-        argsinfo = inspect.getargvalues(inspect.currentframe())
-        _print_args(argsinfo)
-    link_shape = (2, *lattice_shape)
-    prior = u1.MultivariateUniform(torch.zeros(link_shape), 2 * torch.pi * torch.ones(link_shape), device=device)
-
-    layers = cs.make_u1_equiv_layers_rs_with_2x1_loops(n_knots=n_knots, lattice_shape=lattice_shape, n_layers=n_layers,
-                                                       hidden_sizes=hidden_sizes, kernel_size=kernel_size,
-                                                       dilation=dilation, float_dtype=float_dtype,
-                                                       device=device)
-
-    u1.set_weights(layers)
-    layers.to(device)  # probably redundant
-    return {'layers': layers, 'prior': prior}
-
-
-def make_u1_rs_model(*, lattice_shape, n_knots, n_layers, hidden_sizes, kernel_size, dilation, float_dtype,
+def make_u1_rs_model(*, type='plaq', lattice_shape, n_knots, n_layers, hidden_sizes, kernel_size, dilation, float_dtype,
                      device, verbose=0):
     if verbose > 0:
         print(f"Making Gauge equivariant rational splines model")
@@ -45,7 +26,7 @@ def make_u1_rs_model(*, lattice_shape, n_knots, n_layers, hidden_sizes, kernel_s
     link_shape = (2, *lattice_shape)
     prior = u1.MultivariateUniform(torch.zeros(link_shape), 2 * torch.pi * torch.ones(link_shape), device=device)
 
-    layers = cs.make_u1_equiv_layers_rs(n_knots=n_knots, lattice_shape=lattice_shape, n_layers=n_layers,
+    layers = cs.make_u1_equiv_layers_rs(type=type, n_knots=n_knots, lattice_shape=lattice_shape, n_layers=n_layers,
                                         hidden_sizes=hidden_sizes, kernel_size=kernel_size,
                                         dilation=dilation, float_dtype=float_dtype,
                                         device=device)
@@ -53,6 +34,12 @@ def make_u1_rs_model(*, lattice_shape, n_knots, n_layers, hidden_sizes, kernel_s
     u1.set_weights(layers)
     layers.to(device)  # probably redundant
     return {'layers': layers, 'prior': prior}
+
+
+def make_schwinger_model(**kwargs):
+    if 'type' in kwargs:
+        del kwargs['type']
+    return make_u1_rs_model(type='sch_2x1', **kwargs)
 
 
 def make_u1_nc_model(*, type='plaq', lattice_shape, n_mixture_comps, n_layers, hidden_sizes, kernel_size, dilation,
@@ -78,6 +65,6 @@ def make_u1_nc_model(*, type='plaq', lattice_shape, n_mixture_comps, n_layers, h
 
 
 def make_u1_nc_model_2x1(**kwargs):
-    if 'type' in   kwargs:
+    if 'type' in kwargs:
         del kwargs['type']
     return make_u1_nc_model(type='sch_2x1', **kwargs)

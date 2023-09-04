@@ -102,7 +102,7 @@ class GenericRSPlaqCouplingLayer(torch.nn.Module):
 
 
 def make_u1_equiv_layers_rs(
-        *, n_layers, n_knots, lattice_shape, hidden_sizes, kernel_size, dilation=1, float_dtype, device):
+        *, type='plaq', n_layers, n_knots, lattice_shape, hidden_sizes, kernel_size, dilation=1, float_dtype, device):
     """Make a list of equivariant layers that transform the links using the circular splines transformation for plaquettes.
 
     The masking pattern as described in https://arxiv.org/abs/2003.06413 is used.
@@ -133,8 +133,18 @@ def make_u1_equiv_layers_rs(
         Torch module containing a list of equivariant layers.
     """
 
+    in_channels = 0
+    match type:
+        case 'plaq':
+            in_channels = 2  # x - > (cos(x), sin(x))
+        case 'sch':
+            in_channels = 2
+        case 'sch_2x1':
+            in_channels = 6
+        case _:
+            raise ValueError(f"Unknown type {type}")
+
     def _make_plaq_coupling(mask):
-        in_channels = 2  # x - > (cos(x), sin(x))
         out_channels = 3 * (n_knots - 1) + 1
         net = make_conv_net(
             in_channels=in_channels,
@@ -151,70 +161,30 @@ def make_u1_equiv_layers_rs(
 
     link_mask_shape = (len(lattice_shape),) + lattice_shape
 
-    masks = equiv.u1_masks(plaq_mask_shape=lattice_shape, link_mask_shape=link_mask_shape, float_dtype=float_dtype,
-                           device=device)
+    loops_function = None
+    match type:
+        case 'plaq':
+            masks = equiv.u1_masks(plaq_mask_shape=lattice_shape, link_mask_shape=link_mask_shape,
+                                   float_dtype=float_dtype,
+                                   device=device)
+
+        case 'sch':
+            masks = schwinger_masks(plaq_mask_shape=lattice_shape, link_mask_shape=link_mask_shape,
+                                    float_dtype=float_dtype,
+                                    device=device)
+        case 'sch_2x1':
+            masks = schwinger_masks_with_2x1_loops(plaq_mask_shape=lattice_shape, link_mask_shape=link_mask_shape,
+                                                   float_dtype=float_dtype,
+                                                   device=device)
+
+            def loops_function(x):
+                return [compute_u1_2x1_loops(x)]
 
     return equiv.make_u1_equiv_layers(make_plaq_coupling=_make_plaq_coupling, masks=masks, n_layers=n_layers,
-                                      device=device)
+                                      device=device, loops_function=loops_function)
 
 
-def make_u1_equiv_layers_rs_with_2x1_loops(
-        *, n_layers, n_knots, lattice_shape, hidden_sizes, kernel_size, dilation=1, float_dtype, device):
-    """Make a list of equivariant layers that transform the links using the circular splines transformation for plaquettes.
-
-        The masking pattern as described in http://arxiv.org/abs/2202.11712  and https://arxiv.org/abs/2308.13294
-        is used together with 2x1 Wilson loops.
-
-        Parameters
-        ----------
-        n_layers
-            Number of layers.
-        n_knots
-            Number of knots in the spline. Because in circular splines the first and the last knot are the same
-            the real  number of knots is n_knots - 1.
-        lattice_shape
-            Shape of the lattice.
-        hidden_sizes
-            Number of channels in the hidden layers of the neural network.
-        kernel_size
-            Kernel size of the convolutional layers in the neural network.
-        dilation
-            A list of dileations for the convolutional layers in the neural network.
-            If an integer is given then the same dilation is used for all layers.
-        float_dtype
-            Type of the floating point numbers used in the computation.
-        device
-            Device on which the computation is performed.
-
-        Returns
-        -------
-            Torch module containing a list of equivariant layers.
-        """
-
-    def make_plaq_coupling(mask):
-        in_channels = 6
-        out_channels = 3 * (n_knots - 1) + 1
-        net = make_conv_net(
-            in_channels=in_channels,
-            out_channels=out_channels,
-            hidden_sizes=hidden_sizes,
-            kernel_size=kernel_size,
-            use_final_tanh=False,
-            dilation=dilation,
-            float_dtype=getattr(torch, float_dtype)
-        )
-        net.to(device)
-        return GenericRSPlaqCouplingLayer(
-            n_knots=n_knots, net=net, masks=mask, device=device
-        )
-
-    link_mask_shape = (len(lattice_shape),) + tuple(lattice_shape)
-
-    masks = schwinger_masks_with_2x1_loops(plaq_mask_shape=lattice_shape, link_mask_shape=link_mask_shape,
-                                           float_dtype=float_dtype,
-                                           device=device)
-
-    return equiv.make_u1_equiv_layers(loops_function=lambda x: [compute_u1_2x1_loops(x)],
-                                      make_plaq_coupling=make_plaq_coupling,
-                                      masks=masks, n_layers=n_layers,
-                                      device=device)
+def make_u1_equiv_layers_rs_with_2x1_loops(**kwargs):
+    if 'type' in kwargs:
+        del kwargs['type']
+    return make_u1_equiv_layers_rs(type='sch_2x1', **kwargs)
