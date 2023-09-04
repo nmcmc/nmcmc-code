@@ -15,7 +15,7 @@ from normalizing_flow.schwinger_masks import schwinger_masks, schwinger_masks_wi
 from phys_models.U1 import compute_u1_2x1_loops
 
 
-def stack_cos_sin(x):
+def _stack_cos_sin(x):
     return torch.stack((torch.cos(x), torch.sin(x)), dim=1)
 
 
@@ -80,7 +80,7 @@ class NCPPlaqCouplingLayer(torch.nn.Module):
     def forward(self, x, *loops):
         x2 = self.plaq_mask["frozen"] * x
 
-        net_out = self.net(stack_cos_sin(x2))
+        net_out = self.net(_stack_cos_sin(x2))
         assert net_out.shape[1] >= 2, "CNN must output n_mix (s_i) + 1 (t) channels"
         s, t = net_out[:, :-1], net_out[:, -1]
 
@@ -100,7 +100,7 @@ class NCPPlaqCouplingLayer(torch.nn.Module):
 
     def reverse(self, fx, *loops):
         fx2 = self.plaq_mask["frozen"] * fx
-        net_out = self.net(stack_cos_sin(fx2))
+        net_out = self.net(_stack_cos_sin(fx2))
         assert net_out.shape[1] >= 2, "CNN must output n_mix (s_i) + 1 (t) channels"
         s, t = net_out[:, :-1], net_out[:, -1]
 
