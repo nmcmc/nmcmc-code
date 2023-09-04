@@ -9,7 +9,7 @@ import torch
 
 from normalizing_flow.flow import make_conv_net
 import normalizing_flow.u1_equivariant as equiv
-from normalizing_flow.u1_equivariant import u1_masks
+from normalizing_flow.u1_equivariant import u1_masks, _prepare_u1_input
 from phys_models.U1 import torch_mod
 from normalizing_flow.schwinger_masks import schwinger_masks, schwinger_masks_with_2x1_loops
 from phys_models.U1 import compute_u1_2x1_loops
@@ -72,15 +72,16 @@ class NCPPlaqCouplingLayer(torch.nn.Module):
         super().__init__()
 
         self.plaq_mask = mask[0]
+        self.loop_masks = mask[1:]
         self.mask = mask
         self.net = net
         self.inv_prec = inv_prec
         self.inv_max_iter = inv_max_iter
 
     def forward(self, x, *loops):
-        x2 = self.plaq_mask["frozen"] * x
+        net_in = _prepare_u1_input(x, self.plaq_mask, loops, self.loop_masks)
 
-        net_out = self.net(_stack_cos_sin(x2))
+        net_out = self.net(net_in)
         assert net_out.shape[1] >= 2, "CNN must output n_mix (s_i) + 1 (t) channels"
         s, t = net_out[:, :-1], net_out[:, -1]
 
@@ -120,9 +121,20 @@ class NCPPlaqCouplingLayer(torch.nn.Module):
 
 
 def make_u1_equiv_layers(
-        *, n_layers, n_mixture_comps, lattice_shape, hidden_sizes, kernel_size, dilation, float_dtype, device):
+        *, type='plaq', n_layers, n_mixture_comps, lattice_shape, hidden_sizes, kernel_size, dilation, float_dtype,
+        device):
+    in_channels = 0
+    match type:
+        case 'plaq':
+            in_channels = 2  # x - > (cos(x), sin(x))
+        case 'sch':
+            in_channels = 2
+        case 'sch_2x1':
+            in_channels = 6
+        case _:
+            raise ValueError(f"Unknown type {type}")
+
     def make_plaq_coupling(mask):
-        in_channels = 2  # x - > (cos(x), sin(x))
         out_channels = n_mixture_comps + 1  # for mixture s and t, respectively
         net = make_conv_net(
             in_channels=in_channels,
@@ -136,39 +148,30 @@ def make_u1_equiv_layers(
         return NCPPlaqCouplingLayer(net, mask=mask, device=device)
 
     link_mask_shape = (len(lattice_shape),) + lattice_shape
+    loops_function = None
+    match type:
+        case 'plaq':
+            masks = u1_masks(plaq_mask_shape=lattice_shape, link_mask_shape=link_mask_shape,
+                             float_dtype=float_dtype,
+                             device=device)
 
-    masks = u1_masks(plaq_mask_shape=lattice_shape, link_mask_shape=link_mask_shape,
-                     float_dtype=float_dtype,
-                     device=device)
+        case 'sch':
+            masks = schwinger_masks(plaq_mask_shape=lattice_shape, link_mask_shape=link_mask_shape,
+                                    float_dtype=float_dtype,
+                                    device=device)
+        case 'sch_2x1':
+            masks = schwinger_masks_with_2x1_loops(plaq_mask_shape=lattice_shape, link_mask_shape=link_mask_shape,
+                                                   float_dtype=float_dtype,
+                                                   device=device)
+
+            def loops_function(x):
+                return [compute_u1_2x1_loops(x)]
 
     return equiv.make_u1_equiv_layers(make_plaq_coupling=make_plaq_coupling, masks=masks, n_layers=n_layers,
-                                      device=device)
+                                      device=device, loops_function=loops_function)
 
 
-def make_u1_equiv_layers_2x1_loops(
-        *, n_layers, n_mixture_comps, lattice_shape, hidden_sizes, kernel_size, dilation, float_dtype, device):
-    def make_plaq_coupling(mask):
-        in_channels = 6
-        out_channels = n_mixture_comps + 1  # for mixture s and t, respectively
-        net = make_conv_net(
-            in_channels=in_channels,
-            out_channels=out_channels,
-            hidden_sizes=hidden_sizes,
-            kernel_size=kernel_size,
-            dilation=dilation,
-            use_final_tanh=False,
-            float_dtype=getattr(torch, float_dtype)
-        )
-
-        return NCPPlaqCouplingLayer(net, mask=mask, device=device)
-
-    link_mask_shape = (len(lattice_shape),) + tuple(lattice_shape)
-
-    masks = schwinger_masks_with_2x1_loops(plaq_mask_shape=lattice_shape, link_mask_shape=link_mask_shape,
-                                           float_dtype=float_dtype,
-                                           device=device)
-
-    return equiv.make_u1_equiv_layers(loops_function=lambda x: [compute_u1_2x1_loops(x)],
-                                      make_plaq_coupling=make_plaq_coupling,
-                                      masks=masks, n_layers=n_layers,
-                                      device=device)
+def make_u1_equiv_layers_2x1_loops(**kwargs):
+    if 'type' in kwargs:
+        del kwargs['type']
+    return make_u1_equiv_layers(type='sch_2x1', **kwargs)

@@ -55,7 +55,8 @@ def make_u1_rs_model(*, lattice_shape, n_knots, n_layers, hidden_sizes, kernel_s
     return {'layers': layers, 'prior': prior}
 
 
-def make_u1_nc_model(*, lattice_shape, n_mixture_comps, n_layers, hidden_sizes, kernel_size, dilation, float_dtype,
+def make_u1_nc_model(*, type='plaq', lattice_shape, n_mixture_comps, n_layers, hidden_sizes, kernel_size, dilation,
+                     float_dtype,
                      device, verbose=0):
     if verbose > 0:
         print(f"Making Gauge equivariant non-compact projection model")
@@ -65,7 +66,8 @@ def make_u1_nc_model(*, lattice_shape, n_mixture_comps, n_layers, hidden_sizes, 
     link_shape = (2, *lattice_shape)
     prior = u1.MultivariateUniform(torch.zeros(link_shape), 2 * torch.pi * torch.ones(link_shape), device=device)
 
-    layers = nc.make_u1_equiv_layers(lattice_shape=lattice_shape, n_layers=n_layers, n_mixture_comps=n_mixture_comps,
+    layers = nc.make_u1_equiv_layers(type=type, lattice_shape=lattice_shape, n_layers=n_layers,
+                                     n_mixture_comps=n_mixture_comps,
                                      hidden_sizes=hidden_sizes, kernel_size=kernel_size,
                                      dilation=dilation, float_dtype=float_dtype,
                                      device=device)
@@ -75,21 +77,7 @@ def make_u1_nc_model(*, lattice_shape, n_mixture_comps, n_layers, hidden_sizes, 
     return {'layers': layers, 'prior': prior}
 
 
-def make_u1_nc_model_2x1(*, lattice_shape, n_mixture_comps, n_layers, hidden_sizes, kernel_size, dilation, float_dtype,
-                         device, verbose=0):
-    if verbose > 0:
-        print(f"Making Gauge equivariant non-compact projection model")
-        argsinfo = inspect.getargvalues(inspect.currentframe())
-        _print_args(argsinfo)
-
-    link_shape = (2, *lattice_shape)
-    prior = u1.MultivariateUniform(torch.zeros(link_shape), 2 * torch.pi * torch.ones(link_shape), device=device)
-
-    layers = nc.make_u1_equiv_layers(lattice_shape=lattice_shape, n_layers=n_layers, n_mixture_comps=n_mixture_comps,
-                                     hidden_sizes=hidden_sizes, kernel_size=kernel_size,
-                                     dilation=dilation, float_dtype=float_dtype,
-                                     device=device)
-
-    u1.set_weights(layers)
-    layers.to(device)  # probably redundant
-    return {'layers': layers, 'prior': prior}
+def make_u1_nc_model_2x1(**kwargs):
+    if 'type' in   kwargs:
+        del kwargs['type']
+    return make_u1_nc_model(type='sch_2x1', **kwargs)

@@ -2,38 +2,10 @@ import torch
 
 from normalizing_flow.flow import make_conv_net
 import normalizing_flow.u1_equivariant as equiv
-from normalizing_flow.u1_equivariant import torch_mod
+from normalizing_flow.u1_equivariant import torch_mod, _prepare_u1_input
 import normalizing_flow.rational_splines_u1 as rs
 from normalizing_flow.schwinger_masks import schwinger_masks, schwinger_masks_with_2x1_loops
 from phys_models.U1 import compute_u1_2x1_loops
-
-
-def make_sin_cos(x):
-    """Takes a 3 or 4 dimensional tensor and returns a 4 dimensional tensor that contains the cos and sin of the
-    input concatenated along the dimension 1. If the input is 3 dimensional then dimension 1 is inserted into output.
-
-    Parameters
-    ----------
-    x
-        A tensor of shape (batch_size, channels, L, L) or (batch_size, L, L).
-    Returns
-        Returns a tensor of shape (batch_size, 2 * channels, L, L) or (batch_size, 2, L, L) with cos(x) and sin(x).
-    -------
-    """
-
-    if x.dim() == 3:
-        return torch.stack((torch.cos(x), torch.sin(x)), dim=1)
-    elif x.dim() == 4:
-        return torch.cat((torch.cos(x), torch.sin(x)), dim=1)
-
-
-def _prepare_u1_input(plaq, plaq_mask, loops=(), loops_masks=()):
-    p2 = plaq_mask['frozen'] * plaq
-    net_in = [make_sin_cos(p2)]
-    for i, l in enumerate(loops):
-        sc = make_sin_cos(l * loops_masks[i])
-        net_in.append(sc)
-    return torch.cat(net_in, dim=1)
 
 
 class GenericRSPlaqCouplingLayer(torch.nn.Module):
@@ -160,6 +132,7 @@ def make_u1_equiv_layers_rs(
     -------
         Torch module containing a list of equivariant layers.
     """
+
     def _make_plaq_coupling(mask):
         in_channels = 2  # x - > (cos(x), sin(x))
         out_channels = 3 * (n_knots - 1) + 1
@@ -217,6 +190,7 @@ def make_u1_equiv_layers_rs_with_2x1_loops(
         -------
             Torch module containing a list of equivariant layers.
         """
+
     def make_plaq_coupling(mask):
         in_channels = 6
         out_channels = 3 * (n_knots - 1) + 1

@@ -5,6 +5,32 @@ import torch
 
 from phys_models.U1 import compute_u1_plaq, torch_mod
 
+def make_sin_cos(x):
+    """Takes a 3 or 4 dimensional tensor and returns a 4 dimensional tensor that contains the cos and sin of the
+    input concatenated along the dimension 1. If the input is 3 dimensional then dimension 1 is inserted into output.
+
+    Parameters
+    ----------
+    x
+        A tensor of shape (batch_size, channels, L, L) or (batch_size, L, L).
+    Returns
+        Returns a tensor of shape (batch_size, 2 * channels, L, L) or (batch_size, 2, L, L) with cos(x) and sin(x).
+    -------
+    """
+
+    if x.dim() == 3:
+        return torch.stack((torch.cos(x), torch.sin(x)), dim=1)
+    elif x.dim() == 4:
+        return torch.cat((torch.cos(x), torch.sin(x)), dim=1)
+
+
+def _prepare_u1_input(plaq, plaq_mask, loops=(), loops_masks=()):
+    p2 = plaq_mask['frozen'] * plaq
+    net_in = [make_sin_cos(p2)]
+    for i, l in enumerate(loops):
+        sc = make_sin_cos(l * loops_masks[i])
+        net_in.append(sc)
+    return torch.cat(net_in, dim=1)
 
 class GenericGaugeEquivCouplingLayer(torch.nn.Module):
     """A generic gauge equivariant link coupling layer for U(1) gauge theory.

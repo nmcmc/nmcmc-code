@@ -61,7 +61,7 @@ parser.add_argument('--float-dtype', default='float32', choices=['float32', 'flo
                     help='Float precision used for training')
 parser.add_argument('--coupling', default='cs', choices=['cs', 'ncp'],
                     help='''Type of plaquettes coupling layer used for the model''')
-parser.add_argument('--equiv', default='plaq', choices=['plaq', '2x1'],
+parser.add_argument('--equiv', default='plaq', choices=['plaq', '2x1', 'sch'],
                     help='''Type of equivariant layers used for the model''')
 parser.add_argument('-b', '--beta', type=float, default='1.0', help='beta')
 parser.add_argument('-lr', '--learning-rate', type=float, default='0.00025',
@@ -78,6 +78,14 @@ if args.list_cuda_devices:
     scripts.list_cuda_devices()
     sys.exit(0)
 
+if args.coupling == 'ncp' and args.loss == 'REINFORCE':
+    print("NCP coupling is not compatible with REINFORCE loss")
+    sys.exit(0)
+
+if args.equiv == 'sch' and args.coupling == 'cs':
+    print('The `sch` equivariant layer is not yet implemented with circular splines coupling layer')
+    sys.exit(0)
+
 if args.verbose > 0:
     print(f"Running on PyTorch {torch.__version__}")
 
@@ -86,10 +94,6 @@ scripts.check_cuda(torch_device)
 
 if args.verbose:
     scripts.describe_device(torch_device)
-
-if args.coupling == 'ncp' and args.loss == 'REINFORCE':
-    print("NCP coupling is not compatible with REINFORCE loss")
-    sys.exit(1)
 
 batch_size = args.batch_size
 float_dtype = args.float_dtype
@@ -103,7 +107,6 @@ u1_action = u1.U1GaugeAction(beta=beta)
 loss_function = getattr(training.loss, f"{args.loss}_loss")
 
 if args.equiv == '2x1':
-
     if args.coupling == 'cs':
         model_cfg = {'n_layers': 48,
                      'hidden_sizes': [64, 64],
@@ -124,7 +127,7 @@ if args.equiv == '2x1':
             'dilation': 1,
             'float_dtype': 'float32'
         }
-        model = make_u1_nc_model_2x1(**model_cfg, device=torch_device, verbose=args.verbose)
+        model = make_u1_nc_model_2x1(type='sch_2x1', **model_cfg, device=torch_device, verbose=args.verbose)
 
 elif args.equiv == 'plaq':
     if args.coupling == 'cs':
@@ -147,7 +150,32 @@ elif args.equiv == 'plaq':
             'dilation': 1,
             'float_dtype': 'float32'
         }
-        model = make_u1_nc_model(**model_cfg, device=torch_device, verbose=args.verbose)
+        model = make_u1_nc_model(type='plaq', **model_cfg, device=torch_device, verbose=args.verbose)
+elif args.equiv == 'sch':
+    if args.coupling == 'cs':
+        #     model_cfg = {'n_layers': 16,
+        #                  'hidden_sizes': [8, 8],
+        #                  'kernel_size': 3,
+        #                  'n_knots': 9,
+        #                  'dilation': 1,
+        #                  'float_dtype': 'float32',
+        #                  'lattice_shape': lattice_shape
+        #                  }
+        #     model = make_u1_rs_model(**model_cfg, device=torch_device, verbose=args.verbose)
+        pass
+    elif args.coupling == 'ncp':
+        model_cfg = {
+            'n_mixture_comps': 6,
+            'n_layers': 16,
+            'hidden_sizes': [8, 8],
+            'kernel_size': 3,
+            'lattice_shape': lattice_shape,
+            'dilation': 1,
+            'float_dtype': 'float32'
+        }
+        model = make_u1_nc_model(type='sch', **model_cfg, device=torch_device, verbose=args.verbose)
+
+
 
 layers = model['layers']
 prior = model['prior']
