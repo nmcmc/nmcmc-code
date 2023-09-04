@@ -18,40 +18,64 @@ jupyter:
 # %autoreload 2
 ```
 
+```{python}
+import matplotlib.pyplot as plt    
+```
+
+```{python}
+from utils.lattice_plots import plot_lattice, plaquette
+```
+
 # U(1) Pure gauge model. 
+
+
+$U(1)$ group is a group of all complex numbers with absolute value 1 and the elements of this group are completely detrmined by a single phase $\theta$: $U(x)=e^{i\theta(x)}$. In the lattice formulation the elements of this group live on the links of the lattice 
+
+```{python}
+fig, ax = plt.subplots()
+plot_lattice(8, ax=ax);
+```
+
+$$U_\mu(x)=e^{i\theta_\mu(x)}$$
+
+
+$U_\mu(x)$ is a link starting from $x$ in direction $\mu=0,1$ and $\hat\mu$ is the displacement vector of one lattice site in the direction $\mu$.  Given the gauge transform $g(x)$  where each $g(x)=e^{i\phi(x)}$ is an element of $U(1)$ living on the site $x$ the lattice the action of this transformation on links is defined by
+
+
+$$U_\mu(x)\longrightarrow g(x)U(x)_\mu g^{-1}(x+\hat\mu),\qquad \theta_\mu(x)\longrightarrow \phi(x)+\theta_\mu(x)-\phi(x+\hat\mu)$$
+
+
+We define a plaquette as a product of links around a $1\times1$ loop (links traversed in opposite direction are conjugated)
+
+```{python}
+ax = plot_lattice(4, l=0.45, cr=0.05)
+ax.set_aspect(1.0);ax.set_axis_off()
+for x in range(4):
+    for y in range(4):
+        plaquette(x,y, color='blue', l=0.275, r=0.05, d=0.125, ax = ax)
+```
+
+\begin{equation}
+    P(x)=U_1(x) U_0(x+\hat{1}) U_1^\dagger(x+\hat{0}) U_0^\dagger (x) = e^{i\left(\theta_1(x) + \theta_0(x+\hat{1}) -\theta_1(x+\hat{0}) -\theta_0^(x)\right)}
+\end{equation}
+
+
+It's easy to check that plaquettes (as any other loops) are gauge invariant. The Wilson action is  finally defined in term of the plaquettes
 
 
 $\newcommand{\re}{\operatorname{Re}}
 \newcommand{\im}{\operatorname{Im}}$
 \begin{equation}
-    S(U) = -\beta\sum_{x}\re P(x)
+    S(U) = -\beta\sum_{x}\re P(x)=-\beta\sum_{x}\cos\left(\theta_1(x) + \theta_0(x+\hat{1}) -\theta_1(x+\hat{0}) -\theta_0^(x)\right)
 \end{equation}
-
-
-where $P(x)$ is the plaquette 
-
-
-\begin{equation}
-    P(x)=U_1(x) U_0(x+\hat{1}) U_1^\dagger(x+\hat{0}) U_0^\dagger (x).
-\end{equation}
-
-
-$U_\mu(x)$ is a link starting from $x$ in direction $\mu=0,1$ and $\hat\mu$ is the displacement vector of one lattice site in the direction $\mu$.
 
 ```{python}
-import base64
-import torch
 import numpy as np
-
-import matplotlib.pyplot as plt    
+import torch
+print(f'Running with torch version {torch.__version__}')
 ```
 
 ```{python}
-torch.__version__
-```
-
-```{python}
-from scipy.special import iv
 from scipy.stats import linregress
 ```
 
@@ -97,50 +121,45 @@ import normalizing_flow.flow as nf
 Some "sanity tests".
 
 ```{python}
-L = 8
+L = 12
 lattice_shape = (L,L)
 link_shape = (2,L,L)
-# some arbitrary random configurations configurations
+```
+
+Some two arbitrary random configurations
+
+```{python}
 u1_ex1 = 2*np.pi*np.random.random(size=link_shape).astype(float_dtype)
 u1_ex2 = 2*np.pi*np.random.random(size=link_shape).astype(float_dtype)
 cfgs = torch.from_numpy(np.stack((u1_ex1, u1_ex2), axis=0)).to(torch_device)
 ```
 
 ```{python}
-beta = 1
+beta = 1.0
 u1_action = u1.U1GaugeAction(beta)
 ```
 
+Action should be invariant under gauge transformation
+
 ```{python}
-# action is invariant
 cfgs_transformed = u1.random_gauge_transform(cfgs, device=torch_device)
-print(u1_action(cfgs), 'vs', u1_action(cfgs_transformed))
-assert np.allclose(grab(u1_action(cfgs)), grab(u1_action(cfgs_transformed)),1e-5), \
+print(grab(u1_action(cfgs)), 'vs', grab(u1_action(cfgs_transformed)))
+assert np.allclose(grab(u1_action(cfgs)), grab(u1_action(cfgs_transformed)),atol=1e-5), \
     'gauge transform should be a symmetry of the action'
 ```
 
 ```{python}
-np.abs(grab(u1.compute_u1_2x1_loops(cfgs))-grab(u1.compute_u1_2x1_loops(cfgs_transformed))).mean()
+assert np.allclose(grab(u1.compute_u1_2x1_loops(cfgs)),grab(u1.compute_u1_2x1_loops(cfgs_transformed)),atol=1e-5)
 ```
 
 ```{python}
 with np.printoptions(suppress=True):
     print(f'cfg topological charges = {grab(u1.topo_charge(cfgs))}')
 Q = grab(u1.topo_charge(cfgs))
-assert np.allclose(Q, np.around(Q), atol=1e-5), 'topological charge must be an integer'
+assert np.allclose(Q, np.around(Q), atol=1e-6), 'topological charge must be an integer'
 ```
 
-```{python}
-prior = u1.MultivariateUniform(torch.zeros(link_shape), 2*np.pi*torch.ones(link_shape), device=torch_device)
-```
-
-```{python}
-z = prior.sample_n(17)
-print(f'z.shape = {z.shape}')
-print(f'log r(z) = {grab(prior.log_prob(z))}')
-```
-
-# Free energgy
+# Free energy
 
 
 The partition function of this model is given by (R. Janik private comminication)
@@ -152,31 +171,115 @@ $$Z(\beta)=I_0(\beta)^{L^2} + 2\sum_{n=1}^\infty I_n(\beta)^{L^2}$$
 where $I_n(\beta)$ are incomplete Bessel functions. The logarithm of $Z$ can be written as 
 
 
-$$\log Z(\beta)=
+$$\log Z(\beta)=(2\pi)^{-2L^2}\left(
 L^2\log I_0(\beta) + \log\left(
     1 + 2\sum_{n=1}^\infty \left(\frac{I_n(\beta)}{I_0(\beta)}\right)^{L^2}
-    \right)
+    \right)\right)
 $$
 
 
-This function is  implemented (approximately) in module `phys_models.U1`. 
+The log of this function is  implemented (approximately) in module `phys_models.U1`.  
 
 ```{python}
-F=-u1.logZ(L,beta)-2*L*L*np.log(2*np.pi)
+F=-u1.logZ(L,beta)
 print(f'Exact F = {F:.4f}')
 ```
 
 ## Prior distrubution 
 
 
-Prior distribution is uniform on interval $[0,2\pi)$.
+Prior distribution is uniform on interval $[0,2\pi)$, so the probability density for each configurations is $(2\pi)^{-2*L^2}$.
 
 ```{python}
 # Prior
 prior = u1.MultivariateUniform(torch.zeros(link_shape), 2*np.pi*torch.ones(link_shape), device=torch_device).to(torch_device)
 ```
 
+```{python}
+z = prior.sample_n(16)
+print(f'z.shape = {z.shape}')
+assert np.allclose(grab(prior.log_prob(z)),-2*L*L*np.log(2*np.pi))
+```
+
+### Plaquettes transformation
+
+
+The plaquette transform must be a diffeomorphism $f(\theta): [0,2\pi]\rightarrow [0,2\pi]$. For it is   sufficient that 
+$$
+\begin{split}
+&f(0)=0,\; f(2\pi)=2\pi\\
+&\frac{\partial f(\theta)}{\theta}>0\\
+&\left.\frac{\partial f(\theta)}{\theta}\right|_{\theta=0} = \left.\frac{\partial f(\theta)}{\theta}\right|_{\theta=2\pi}
+\end{split}
+$$
+
+
 ## Non-compact projection (NCP) coupling
+
+
+Non-compact projection is a transformation of the form
+
+
+$$
+f(\theta,\alpha, \beta)= 2 \tan^{-1}\left(\alpha\tan\left(\frac{\theta}{2}\right)+\beta\right),\quad \alpha>0
+$$
+
+```{python}
+thetas=torch.linspace(0,2*torch.pi-1e-7,500)
+for s in [0,0.5,1,5]:
+    plt.plot(thetas, ncp.tan_transform(thetas,torch.FloatTensor([s])), label=f"{s:.2f}");
+plt.xlabel('$\\theta$')    
+plt.legend(title='s');    
+```
+
+In our implementation we set $\beta=0$ and $\alpha=\exp(s)$ where $s$ is an arbitrary real number. The final transformation is a mean of $n_m$ such transforms plus an offset
+
+
+$$g(\theta,\vec{s},t)=\mod\left(\frac{1}{n_m}\sum_{i=1}^{n_m} f(\theta,\exp(s_i),0)+t, 2\pi\right)$$
+
+```{python}
+s = torch.FloatTensor([10,0.1,3,0.1,1,3])
+plt.plot(
+    thetas,  ncp.mixture_tan_transform(thetas.unsqueeze(1),s.unsqueeze(0)).squeeze()
+        );
+plt.xlabel('$\\theta$')  ;
+```
+
+### Plaquettes
+
+```{python}
+z = prior.sample_n(10)
+```
+
+```{python}
+plaq = u1.compute_u1_plaq(z,0,1)
+```
+
+```{python}
+plaq.mean()
+```
+
+```{python}
+plaq.shape
+```
+
+```{python}
+plaq_trans = ncp.tan_transform(plaq,s=torch.zeros_like(plaq))
+```
+
+```{python}
+torch.abs(plaq-plaq_trans).mean()
+```
+
+```{python}
+plaq_trans = ncp.tan_transform(plaq,10*torch.ones_like(plaq))
+```
+
+```{python}
+torch.abs(plaq-plaq_trans).mean()
+```
+
+### Training
 
 ```{python}
 # Model parameters

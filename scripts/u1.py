@@ -197,7 +197,7 @@ if args.verbose > 0:
 
 if args.n_samples > 0:
     print(f"Sampling {args.n_samples} configurations")
-    F = -u1.logZ(L, beta) - 2 * L * L * np.log(2 * np.pi)
+    F = -u1.logZ(L, beta)
     u, lq = nf.sample(batch_size=batch_size, n_samples=args.n_samples, prior=prior, layers=layers)
     lp = -u1_action(u)
     lw = lp - lq

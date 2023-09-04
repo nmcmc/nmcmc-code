@@ -1,4 +1,8 @@
 # This is modified code from https://arxiv.org/abs/2101.08176 by M.S. Albergo et all
+"""Implementation of the non-compact projection normalizing flow layer.
+
+See https://arxiv.org/abs/2002.02428
+"""
 
 import numpy as np
 import torch
@@ -144,7 +148,7 @@ def make_u1_equiv_layers(
 def make_u1_equiv_layers_2x1_loops(
         *, n_layers, n_mixture_comps, lattice_shape, hidden_sizes, kernel_size, dilation, float_dtype, device):
     def make_plaq_coupling(mask):
-        in_channels = 6  # x - > (cos(x), sin(x))
+        in_channels = 6
         out_channels = n_mixture_comps + 1  # for mixture s and t, respectively
         net = make_conv_net(
             in_channels=in_channels,
@@ -168,5 +172,3 @@ def make_u1_equiv_layers_2x1_loops(
                                       make_plaq_coupling=make_plaq_coupling,
                                       masks=masks, n_layers=n_layers,
                                       device=device)
-
-# %%
