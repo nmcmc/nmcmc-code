@@ -19,8 +19,8 @@ def metropolize(samples_q, log_q, log_p):
             accepted[i] = 1
         else:
             samples_p[i] = samples_p[i - 1]
-            samples_p_log_q = log_q[i - 1]
-            samples_p_log_p = log_p[i - 1]
+            samples_p_log_q[i] = log_q[i - 1]
+            samples_p_log_p[i] = log_p[i - 1]
 
     return samples_p, samples_p_log_q, samples_p_log_p, accepted
 
