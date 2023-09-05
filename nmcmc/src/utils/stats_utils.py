@@ -110,7 +110,7 @@ def torch_bootstrap_mean(x, *, n_samples, binsize, logweights=None):
     boots = []
     if logweights is not None:
         weights = torch.exp(logweights - torch.max(logweights))
-        bweights = _torch_block(weights, binsize)[0]
+        bweights = _torch_block(weights, binsize)
 
     for i in range(n_samples):
         idx = torch.from_numpy(np.random.choice(n_bins, n_bins))
