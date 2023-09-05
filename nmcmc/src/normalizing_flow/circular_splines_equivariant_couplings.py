@@ -105,10 +105,15 @@ def make_u1_equiv_layers_rs(
         *, type='plaq', n_layers, n_knots, lattice_shape, hidden_sizes, kernel_size, dilation=1, float_dtype, device):
     """Make a list of equivariant layers that transform the links using the circular splines transformation for plaquettes.
 
-    The masking pattern as described in https://arxiv.org/abs/2003.06413 is used.
 
     Parameters
     ----------
+    type
+        type of the equivariant layer. Can be 'plaq', 'sch' or 'sch_2x1.
+        This defines the masking pattern used for the plaquettes and links and the type of additional loops if any.
+        `plaq` uses a simple plaquette masking pattern defined in https://arxiv.org/abs/2003.06413
+        `sch` uses the masking pattern defined in http://arxiv.org/abs/2202.11712 but without the 2x1 loops.
+        `sch_2x1` uses the masking pattern defined in http://arxiv.org/abs/2202.11712 together with the 2x1 loops.
     n_layers
         Number of layers.
     n_knots
@@ -117,11 +122,11 @@ def make_u1_equiv_layers_rs(
     lattice_shape
         Shape of the lattice.
     hidden_sizes
-        Number of channels in the hidden layers of the neural network.
+        Number of channels in the hidden layers of the neural network. Also defines the number of hidden layers.
     kernel_size
         Kernel size of the convolutional layers in the neural network.
     dilation
-        A list of dileations for the convolutional layers in the neural network.
+        A list of dilations for the convolutional layers in the neural network.
         If an integer is given then the same dilation is used for all layers.
     float_dtype
         Type of the floating point numbers used in the computation.
@@ -138,9 +143,9 @@ def make_u1_equiv_layers_rs(
         case 'plaq':
             in_channels = 2  # x - > (cos(x), sin(x))
         case 'sch':
-            in_channels = 2
+            in_channels = 2 # x - > (cos(x), sin(x))
         case 'sch_2x1':
-            in_channels = 6
+            in_channels = 6 # x - > (cos(x), sin(x), cos(x_2x1), sin(x_2x1), cos(x_1x2), sin(x_1x2))
         case _:
             raise ValueError(f"Unknown type {type}")
 
