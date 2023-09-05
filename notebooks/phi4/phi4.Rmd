@@ -5,7 +5,7 @@ jupyter:
       extension: .Rmd
       format_name: rmarkdown
       format_version: '1.2'
-      jupytext_version: 1.15.0
+      jupytext_version: 1.15.1
   kernelspec:
     display_name: Python 3 (ipykernel)
     language: python
@@ -17,13 +17,16 @@ jupyter:
 # %autoreload 2
 ```
 
-# $\phi^4$ model
+# $\phi^4$ lattice field theory
+
+
+This theory  is defined by the action  
 
 
 $\newcommand{\bphi}{\mathbf{\phi}}$
 \begin{equation}
 \begin{split}
-    S_{P_1}(\bphi|m^2,\lambda) &= \frac{1}{2}\sum_{i,j=0}^{L-1}
+    S_{P_1}(\bphi|m^2,\lambda) &= \sum_{i,j=0}^{L-1}
     \left( 
     (\phi_{i,j}^2-\phi_{i+1,j} \phi_{i,j}) + (\phi_{i,j}^2-\phi_{i,j+1} \phi_{i,j})\right)\\
     &\phantom{=}+\sum_{i,j=0}^{L-1}\left(\frac{m^2}{2}\phi_{i,j}^2+\frac{\lambda}{4!}\phi_{i,j}^4\right),
@@ -31,7 +34,10 @@ $\newcommand{\bphi}{\mathbf{\phi}}$
 \end{equation}
 
 
-which is equal to
+where $\phi_{ij}$ is a scalar field at lattice site $(i,j)$.  
+
+
+This action can be rewritten in more "textbook" form
 
 
 $\newcommand{\bphi}{\mathbf{\phi}}$
@@ -45,11 +51,14 @@ $\newcommand{\bphi}{\mathbf{\phi}}$
 \end{equation}
 
 
-## Free field ($\lambda = 0$)
+## Free field ($\lambda = 0$) free energy
+
+
+When $\lambda=0$ and $m^2>0$ theory is analytically solvable and the free energy can be calculated exactly
 
 
 $$
-F = -\log Z = -\frac{1}{2}L^2\log(2\pi)+\frac{1}{2}\sum_{q_0,q_1=0}^{L-1}\log\left(4 \sum_{m=0}^1 \sin\left(\frac{\pi}{L}q_\mu\right)^2+m^2)\right)
+F = -\log Z = -\frac{1}{2}L^2\log(2\pi)+\frac{1}{2}\sum_{q_0,q_1=0}^{L-1}\log\left(4 \sum_{\mu=0}^1 \sin\left(\frac{\pi}{L}q_\mu\right)^2+m^2\right)
 $$
 
 ```{python}
@@ -66,7 +75,7 @@ import matplotlib.pyplot as plt
 ```{python}
 import normalizing_flow.flow as nf 
 import phys_models.phi4 as phi4
-from utils.stats_utils import torch_bootstrapf, torch_bootstrapo
+from utils.stats_utils import torch_bootstrapf, torch_bootstrapo, torch_bootstrap_mean
 ```
 
 ```{python}
@@ -75,15 +84,19 @@ def grab(var):
 ```
 
 ```{python}
+import utils
 from utils import metrics
 ```
 
 ```{python}
 if torch.cuda.is_available():
+    for dev in range(torch.cuda.device_count()):
+        print(torch.cuda.get_device_properties(dev))
     torch_device = f"cuda"
+    print(f"\nRunning on {torch_device} {torch.cuda.get_device_properties(torch_device)}")    
 else:    
     torch_device = 'cpu'
-print(torch_device)    
+ 
 ```
 
 ```{python}
@@ -92,9 +105,7 @@ lattice_shape = (L,L)
 ```
 
 ```{python}
-M2  = 1.0
-lam = 0.0
-phi4_action =  phi4.ScalarPhi4Action(M2=M2,lam=lam)
+phi4_action =  phi4.ScalarPhi4Action(M2=1.0,lam=0.0)
 ```
 
 ```{python}
@@ -121,6 +132,8 @@ phi, log_q_phi = nf.apply_flow_to_prior(prior,layers, batch_size=2**10)
 phi.shape
 ```
 
+### Testing reverse flow
+
 ```{python}
 z = prior.sample_n(batch_size=2*10)
 log_z = prior.log_prob(z)
@@ -140,7 +153,7 @@ zz,_ = nf.reverse_apply_flow(layers, phi, log_q_phi)
 ```
 
 ```{python}
-torch.linalg.norm(z-zz)
+torch.linalg.norm((z-zz).detach().cpu())
 ```
 
 ```{python}
@@ -148,11 +161,25 @@ phiphi, log_q_phiphi = nf.apply_flow(layers,zz, log_z)
 ```
 
 ```{python}
-torch.linalg.norm(phiphi-phi)
+torch.linalg.norm( (phiphi-phi).detach())
 ```
 
 ```{python}
-torch.linalg.norm(log_q_phi-log_q_phiphi)
+torch.linalg.norm((log_q_phi-log_q_phiphi).detach())
+```
+
+## $\phi^4$ potential
+
+```{python}
+M2  = -4.
+lam = 12
+phi4_action =  phi4.ScalarPhi4Action(M2=M2,lam=lam)
+```
+
+```{python}
+phi_zero = 0 if M2>=0 else np.sqrt(-12*M2/lam)
+xs = np.linspace(-1.1*phi_zero,1.1*phi_zero,500)
+plt.plot(xs, 0.5*M2*xs**2+lam/24*xs**4);
 ```
 
 ```{python}
@@ -179,48 +206,49 @@ history = {
 }
 ```
 
-## $\phi^4$ potential
-
-```{python}
-M2  = -1.
-lam = 12
-phi4_action =  phi4.ScalarPhi4Action(M2=M2,lam=lam)
-```
-
-```{python}
-phi_zero = 0 if M2>=0 else np.sqrt(-12*M2/lam)
-xs = np.linspace(-1.1*phi_zero,1.1*phi_zero,500)
-plt.plot(xs, 0.5*M2*xs**2+lam/24*xs**4);
-```
-
 ## Training
 
 ```{python}
 start_time = time.time()
 era_start_time = start_time
+total_epochs = N_era*N_epoch
+epochs_done =0 
 for era in range(N_era):
-    print(era)
+    print(f"Starting era {era+1}")
     ess = 0.0
     for epoch in range(N_epoch):
-        mtrcs = train_step(model=model, action=phi4_action, loss_fn=REINFORCE_loss, optimizer=optimizer, batch_size=batch_size, scheduler=None, use_amp=False)
+        mtrcs = train_step(model=model, action=phi4_action, loss_fn=REINFORCE_loss, optimizer=optimizer, 
+                           batch_size=batch_size, scheduler=None, use_amp=False)
         metrics.add_metrics(history, mtrcs)
+        epochs_done+=1
     metrics_avg = metrics.average_metrics(history=history, avg_last_N_epochs=N_epoch,keys = history.keys())    
     metrics.print_dict(metrics_avg)
     t = time.time()
-    ellapsed_time =   t-start_time
+    elapsed_time =   t-start_time
     era_duration = t - era_start_time
-    print(f"ellapsed time = {ellapsed_time:.2f}s era duration = {era_duration:.2f}s")
+
+    time_per_epoch = elapsed_time/epochs_done
+    time_remaining = (total_epochs-epochs_done)*time_per_epoch
+    print(f"elapsed time = {elapsed_time:.2f}s era duration = {era_duration:.2f}s remaining {utils.format_time(time_remaining):s}")
     era_start_time = t
+```
+
+## Sampling
+
+```{python}
+u, lq = nf.sample(batch_size=batch_size, n_samples=2**17, prior=prior, layers=layers)
+lp = -phi4_action(u)
+lw = lp - lq
 ```
 
 ## Free energy
 
 ```{python}
 if M2>0:
-    F_exact = phi4.Free_field_free_energy(L,M2)
-u, lq = nf.sample(batch_size=batch_size, n_samples=2**16, prior=prior, layers=layers)
-lp = -phi4_action(u)
-lw = lp - lq
+    F_free = phi4.free_field_free_energy(L,M2)
+```
+
+```{python}
 F_q, F_q_std = torch_bootstrapf(lambda x: -torch.mean(x), lw, n_samples=100, binsize=16)
 
 
@@ -228,21 +256,105 @@ F_nis, F_nis_std = torch_bootstrapf(lambda x: -(torch.special.logsumexp(x, 0) - 
                                     n_samples=100,
                                     binsize=16)
 if lam==0.0:
-    print(f"Variational free energy = {F_q:.2f}+/-{F_q_std:.3f} diff = {F_q-F_exact:.3f}")
-    print(f"NIS free energy = {F_nis:.2f}+/-{F_nis_std:.3f} diff = {F_nis-F_exact:.3f}")
+    print(f"Variational free energy = {F_q:.2f}+/-{F_q_std:.3f} diff = {F_q-F_free:.3f}")
+    print(f"NIS free energy = {F_nis:.2f}+/-{F_nis_std:.3f} diff = {F_nis-F_free:.3f}")
 else:
     print(f"Variational free energy = {F_q:.2f}+/-{F_q_std:.3f}")
     print(f"NIS free energy = {F_nis:.2f}+/-{F_nis_std:.3f}")
+    print(f"Difference = {F_q-F_nis:.4f}")
 ```
 
-## Magnetisation^2
+## Metropolize
 
 ```{python}
-torch.mean(u.sum(dim=(1,2))**2/(L*L))
+from monte_carlo.nmcmc import metropolize
 ```
 
 ```{python}
-print(u'<m^2> = {:.3f}\u00b1{:.4f}'.format(*torch_bootstrapo(lambda x: torch.sum(x,dim=(1,2))**2/(L*L),u, n_samples=100, binsize=16, logweights=lw) ))
+u_p, s_q, s_p, accepted = metropolize(u, lq, lp)
+```
+
+```{python}
+print("Acceptance rate:", utils.grab(accepted).mean())
+```
+
+## Energy
+
+
+$$E(\phi)= S(\phi)$$
+
+```{python}
+print(u'Variational <E> = {:.3f}+/-{:.4f}'.format(*torch_bootstrap_mean(
+        -lp, n_samples=100, binsize=32, logweights=None) )
+     )
+```
+
+```{python}
+print(u'NIS <E> = {:.3f}+/-{:.4f}'.format(*torch_bootstrap_mean(
+        -lp, n_samples=100, binsize=32, logweights=lw) )
+     )
+```
+
+```{python}
+print(u'NMCMC <E> = {:.3f}+/-{:.4f}'.format(*torch_bootstrap_mean(
+        -s_p, n_samples=100, binsize=32, logweights=None) )
+     )
+```
+
+## Magnetisation
+
+```{python}
+plt.hist(torch.sum(u_p,(1,2)),bins=100);
+```
+
+## $\langle M^2\rangle$
+
+
+$$\frac{1}{n_s}\sum_{k=1}^{n_s}\left(\sum_{i,j=0}^{L-1}\phi_{kij}\right)^2$$
+
+```{python}
+print(u'Variational <M^2> = {:.3f}+/-{:.4f}'.format(*torch_bootstrap_mean(
+    torch.sum(u,(1,2))**2/L**2, n_samples=100, binsize=32, logweights=None) )
+     )
+```
+
+```{python}
+print(u'NIS <M^2> = {:.3f}+/-{:.4f}'.format(*torch_bootstrap_mean(
+    torch.sum(u,(1,2))**2/L**2, n_samples=100, binsize=128, logweights=lw) )
+     )
+```
+
+```{python}
+print(u'NMCMC <M^2> = {:.3f}+/-{:.4f}'.format(*torch_bootstrap_mean(
+   torch.sum(u_p,(1,2))**2/L**2, n_samples=100, binsize=128, logweights=None) )
+     )
+```
+
+```{python}
+from utils.stats_utils import ac_and_tau_int
+```
+
+```{python}
+tau,ac =  ac_and_tau_int(utils.grab(torch.sum(u_p,(1,2))**2/L*L))
+```
+
+```{python}
+print(tau)
+```
+
+```{python}
+plt.plot(ac);
+```
+
+## $|M|$
+
+
+$$\frac{1}{n_s}\sum_{k=1}^{n_s}\left|\sum_{i,j=0}^{L-1}\phi_{kij}\right|$$
+
+```{python}
+print(u'<|M|> = {:.3f}+/-{:.4f}'.format(*torch_bootstrapo(
+    lambda x: torch.abs(torch.sum(x,dim=(1,2))),u, n_samples=100, binsize=32, logweights=lw) )
+     )
 ```
 
 ```{python}
