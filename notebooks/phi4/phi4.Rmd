@@ -17,10 +17,10 @@ jupyter:
 # %autoreload 2
 ```
 
-# $\phi^4$ lattice field theory
+# $\phi^4$ lattice field theory two dimensions
 
 
-This theory  is defined by the action  
+This theory  is defined by the action
 
 
 $\newcommand{\bphi}{\mathbf{\phi}}$
@@ -34,10 +34,7 @@ $\newcommand{\bphi}{\mathbf{\phi}}$
 \end{equation}
 
 
-where $\phi_{ij}$ is a scalar field at lattice site $(i,j)$.  
-
-
-This action can be rewritten in more "textbook" form
+as defined in `phys_models.phi4.ScalarPhi4Action`, where $\phi_{ij}$ is a scalar field at lattice site $(i,j)$.   This action can be rewritten in more "textbook" format
 
 
 $\newcommand{\bphi}{\mathbf{\phi}}$
@@ -60,6 +57,9 @@ When $\lambda=0$ and $m^2>0$ theory is analytically solvable and the free energy
 $$
 F = -\log Z = -\frac{1}{2}L^2\log(2\pi)+\frac{1}{2}\sum_{q_0,q_1=0}^{L-1}\log\left(4 \sum_{\mu=0}^1 \sin\left(\frac{\pi}{L}q_\mu\right)^2+m^2\right)
 $$
+
+
+This function is implemented by  `phys_models.phi4.free_field_free_energy`. 
 
 ```{python}
 import time
@@ -105,7 +105,7 @@ lattice_shape = (L,L)
 ```
 
 ```{python}
-phi4_action =  phi4.ScalarPhi4Action(M2=1.0,lam=0.0)
+
 ```
 
 ```{python}
@@ -168,20 +168,6 @@ torch.linalg.norm( (phiphi-phi).detach())
 torch.linalg.norm((log_q_phi-log_q_phiphi).detach())
 ```
 
-## $\phi^4$ potential
-
-```{python}
-M2  = -4.
-lam = 12
-phi4_action =  phi4.ScalarPhi4Action(M2=M2,lam=lam)
-```
-
-```{python}
-phi_zero = 0 if M2>=0 else np.sqrt(-12*M2/lam)
-xs = np.linspace(-1.1*phi_zero,1.1*phi_zero,500)
-plt.plot(xs, 0.5*M2*xs**2+lam/24*xs**4);
-```
-
 ```{python}
 from training.train import train_step
 from training.loss import rt_loss, REINFORCE_loss
@@ -204,6 +190,14 @@ history = {
 'dkl':[],
 'std_dkl':[]    
 }
+```
+
+## Free field
+
+```{python}
+M2  = 2.0
+lam = 0.0
+phi4_action =  phi4.ScalarPhi4Action(M2=M2,lam=lam)
 ```
 
 ## Training
@@ -359,4 +353,18 @@ print(u'<|M|> = {:.3f}+/-{:.4f}'.format(*torch_bootstrapo(
 
 ```{python}
 
+```
+
+## $\phi^4$ potential
+
+```{python}
+M2  = -4.
+lam = 12
+phi4_action =  phi4.ScalarPhi4Action(M2=M2,lam=lam)
+```
+
+```{python}
+phi_zero = 0 if M2>=0 else np.sqrt(-12*M2/lam)
+xs = np.linspace(-1.1*phi_zero,1.1*phi_zero,500)
+plt.plot(xs, 0.5*M2*xs**2+lam/24*xs**4);
 ```

@@ -17,15 +17,15 @@ class ScalarPhi4Action:
             action_density -=  cfgs * torch.roll(cfgs, -1, mu)
         return torch.sum(action_density, dim=tuple(dims))
 
-def Free_field_free_energy(L,M2):
+def free_field_free_energy(L,M2):
     """
     Calculates the free energy of a free scalar field in 2D with mass squared M2 on a LxL lattice.
 
-    :param L: length of the lattice edge.
+    :param L: lattice size.
     :param M2: float squared mass
     :return: free field free energy
     """
-    q = np.arange(0, 8)
+    q = np.arange(0, L)
     q_0, q_1 = np.meshgrid(q, q)
     k2_0 = 4 * np.sin(np.pi / L * q_0) ** 2
     k2_1 = 4 * np.sin(np.pi / L * q_1) ** 2

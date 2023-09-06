@@ -147,7 +147,7 @@ if args.verbose > 0:
 if args.n_samples > 0:
     print(f"Sampling {args.n_samples} configurations")
     if args.mass2 > 0.0:
-        F_exact = phi4.Free_field_free_energy(L, args.mass2)
+        F_exact = phi4.free_field_free_energy(L, args.mass2)
     u, lq = nf.sample(batch_size=batch_size, n_samples=args.n_samples, prior=prior, layers=layers)
     lp = -action(u)
     lw = lp - lq
