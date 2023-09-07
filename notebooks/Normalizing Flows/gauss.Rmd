@@ -1,0 +1,292 @@
+---
+jupyter:
+  jupytext:
+    text_representation:
+      extension: .Rmd
+      format_name: rmarkdown
+      format_version: '1.2'
+      jupytext_version: 1.15.1
+  kernelspec:
+    display_name: Python 3 (ipykernel)
+    language: python
+    name: python3
+---
+
+```{python}
+import torch 
+import  numpy as np
+```
+
+```{python}
+import matplotlib.pyplot as plt
+```
+
+
+
+
+# Normalizing flows
+
+
+$\newcommand{\bz}{\mathbf{z}}\newcommand{\btheta}{\mathbf{\theta}}$
+$$\mathbb{R}^{D}\ni \bz\longrightarrow (q_{pr}(\bz),\mathbf{\varphi}(\bz|\mathbf{\theta}))\in (\mathbb{R},\mathbb{R}^{D}),
+$$
+
+
+\begin{equation}
+q(\bphi|\btheta)= q_z(\bz|\btheta) \equiv  q_{pr}(\bz)\left|J(\bz|\btheta)^{-1}\right|,\quad \mathbf{\phi}=\mathbf{\varphi}(\bz|\btheta),
+\end{equation}
+
+
+\begin{equation}
+    J(\bz|\btheta)=\det \left(\frac{\partial\mathbf{\varphi}(\bz|\btheta)}{\partial\bz}\right)
+\end{equation}
+
+
+### Exponential distribution
+
+
+Probably the simplest example of normalizing flow is the exponential distribution that can be obtained from uniform distribution by the transformation 
+
+
+$$\phi=-\frac{1}{\lambda}\log(1-z)$$
+
+
+where $z$ is uniformly distributed on interval $[0,1)$. Inverting this flow we obtain 
+
+
+$$z(\phi) = 1-e^{-\lambda\phi}.$$
+
+
+Calculating the Jacobian which is this case is a single number we indeed obtain the exponential distribution
+
+
+$$\left(\frac{\partial \phi(z)}{\partial z}\right)^{-1}=\frac{\partial z(\phi)}{\partial\phi} = \lambda e^{-\lambda\phi}.$$
+
+
+$$\phi(z|\theta)=-\frac{1}{\theta}\log(1-z)$$
+
+
+$$D_{KL}(q|p)=\int_0^\infty\!\text{d}\phi\, q(\phi|\theta)\left(\log q(\phi|\theta)-\log p(\phi)\right)
+=\theta\int_0^\infty\!\text{d}\phi\, e^{-\theta\phi}\left(\log\theta-\log\lambda -\theta\phi +\lambda\phi\right)=
+\frac{\lambda}{\theta}-\log\frac{\lambda}{\theta} -1
+$$
+
+```{python}
+lamda = 2.0
+thetas=np.linspace(.5,4,500)
+plt.plot(thetas, -np.log(lamda/thetas)-1+lamda/thetas);
+```
+
+We can change the variables in the above integral to $z$, by substituting $\phi=\varphi(z|\theta)$
+
+
+$$D_{KL}(q|p)=\int_0^1\!\text{d}z\, \frac{d \varphi(z|\theta)}{d z} q(\varphi(z|\theta)|\theta)
+\left(\log q(\varphi(z|\theta)|\theta)-\log p(\varphi(z|\theta))\right)
+=\int_0^1\!\text{d}z\, q_{pr}(z)
+\left(\log q(\varphi(z|\theta)|\theta)-\log p(\varphi(z|\theta))\right)
+$$
+
+
+This is so called _reparameterisation trick_. It is left for the reader to verify that it does indeed produce same result.
+
+
+### Training 
+
+
+## Normal distribution
+
+
+$$x_0=\cos(2\pi z_0)\sqrt{-2\log(1-z_1)}\quad x_1=\sin(2\pi z_0)\sqrt{-2\log(1-z_1)}$$
+
+
+$$x_0^2+x_1^2 =-2\log(1-z_1)$$
+
+
+$$z_1=1-e^{-\frac{1}{2}(x_0^2+x_1^2)} $$
+
+
+$$\frac{x_1}{x_0}=\tan 2\pi z_0$$
+
+
+$$z_0=\frac{1}{2\pi}\tan^{-1}\frac{x_1}{x_0}$$ 
+
+
+$$
+J(x(z))^{-1}=\det\begin{pmatrix}
+\frac{\partial z_0}{\partial x_0} & \frac{\partial z_0}{\partial x_1}\\
+\frac{\partial z_1}{\partial x_0} & \frac{\partial z_1}{\partial x_1}
+\end{pmatrix}=
+\det\begin{pmatrix}
+-\frac{1}{2\pi}\frac{x_1}{x_0^2+x_1^2} & \frac{1}{2\pi}\frac{x_0}{x_0^2+x_1^2}\\
+x_0 e^{-\frac{1}{2}(x_0^2+x_1^2)} & x_1 e^{-\frac{1}{2}(x_0^2+x_1^2)}
+\end{pmatrix}
+$$
+
+
+$$J(x(z))^{-1} = 
+-\frac{1}{2\pi}\frac{x_1^2}{x_0^2+x_1^2} e^{-\frac{1}{2}(x_0^2+x_1^2)}-\frac{1}{2\pi}\frac{x_0^2}{x_0^2+x_1^2} e^{-\frac{1}{2}(x_0^2+x_1^2)}
+= -\frac{1}{2\pi} e^{-\frac{1}{2}(x_0^2+x_1^2)}
+$$
+
+
+##  Affine coupling layers
+
+```{python}
+from utils.errors import is_model_not_finite, are_grad_not_finite, is_not_finite
+```
+
+```{python}
+class AffineCoupling(torch.nn.Module):
+    def __init__(self,i, net, device='cpu'):
+        super().__init__()
+        self.mask = torch.zeros(2).to(device=device)
+        self.mask[i] = 1.0
+        self.net = net
+
+
+    def forward(self,x):
+      
+        frozen = x*(self.mask-1)
+
+        net_out = self.net(frozen)
+        s,t = net_out[:,0:2],net_out[:,2:4]
+        if is_not_finite({'s':s}:
+            print("s is not finite")
+            break
+        if is_not_finite({'t':t}:
+            print("t is not finite")
+            break    
+        if is_not_finite({'exp_s':troch.exp(s)}:
+            print("exp s is not finite")
+            print(s.max())
+            break    
+        return (torch.exp(s)*x+t)*self.mask + x*(self.mask-1), torch.sum(self.mask*s,1)
+    
+```
+
+```{python}
+def make_affine_layers(n_layers, device='cpu'):
+    layers = []
+    for i in range(n_layers):
+        parity = i % 2
+        net=torch.nn.Sequential(
+            torch.nn.Linear(2,32),torch.nn.LeakyReLU(),
+            torch.nn.Linear(32,32),torch.nn.LeakyReLU(),
+            torch.nn.Linear(32,4)
+        ).to(device=device)
+        layers.append(AffineCoupling(parity, net, device=device) )
+    return torch.nn.ModuleList(layers)                  
+        
+```
+
+```{python}
+def apply_flow(layers, za,logza):
+    lz = torch.zeros_like(logza, device=logza.device)
+    for l in layers:
+        z , logJ = l.forward(za)
+        lz -= logJ
+        za = z
+    return z, lz+logza    
+        
+```
+
+```{python}
+layers = make_affine_layers(32)
+```
+
+```{python}
+apply_flow(layers, torch.rand(4,2), torch.zeros(4))
+```
+
+```{python}
+prior = torch.distributions.uniform.Uniform(0,1)
+```
+
+```{python}
+def action(x):
+    return 0.5*torch.sum(x**2,1)+np.log(2*torch.pi)
+```
+
+```{python}
+batch_size = 2*16
+```
+
+```{python}
+layers = make_affine_layers(32, device='cuda').to(device='cuda')
+```
+
+```{python}
+optim = torch.optim.Adam(layers.parameters(),lr=0.0001)
+```
+
+```{python}
+# %%time
+layers.train()
+for epoch in range(12000):
+    if is_model_not_finite(layers):
+        print(f"model is not finite")
+        break
+    z = prior.rsample( (batch_size,2)).to(device='cuda')
+    x,log_q = apply_flow(layers, z,prior.log_prob(z).sum(1).to(device='cuda') ) 
+    if is_not_finite({'x':x,}):
+        print(f"x is not finite")
+    if is_not_finite({'log_q':log_q}):
+        print(f"log q is not finite")    
+                     
+    log_p = -action(x)
+    loss = torch.mean(log_q-log_p)
+    if epoch % 100 == 0:
+        print(epoch, loss.detach())
+    loss.backward()
+    if is_model_not_finite(layers):
+        print(f"model is not finite")
+        break
+    if are_grad_not_finite(layers):
+        print(f"grads are not finite")
+    torch.nn.utils.clip_grad_value_(layers.parameters(), 0.1)    
+    torch.nn.utils.clip_grad_norm_(layers.parameters(),1.0)
+    if are_grad_not_finite(layers):
+        print(f"grads are not finite")
+        break
+    optim.step()
+print(loss.detach())    
+layers.eval()
+```
+
+```{python}
+with torch.no_grad():
+    z = torch.rand(2**16,2, device='cuda')
+    x, log_q = apply_flow(layers,z, prior.log_prob(z).sum(1).to(device='cuda') )
+    log_p = -action(x)
+    print(f"DKL = {(log_q-log_p).mean():.3f}")
+```
+
+```{python}
+from scipy.stats import norm
+```
+
+```{python}
+xs = np.linspace(-3,3,500)
+plt.hist(x.cpu().ravel(), bins=100, density=True);
+plt.plot(xs, norm.pdf(xs)); 
+```
+
+```{python}
+def jacobian(layers, x, epsilon = 1e-3, device='cpu'):
+    e0 = torch.zeros_like(x, device=device)
+    e0[:,0] = epsilon
+    e1 = torch.zeros_like(x, device=device)
+    e1[:,1] = epsilon
+    with torch.no_grad():
+        out, _ = apply_flow(layers, x, torch.zeros(len(x)),device=device )
+        out0, _ = apply_flow(layers, x+e0, torch.zeros(len(x)), device=device )
+        out1, _ = apply_flow(layers, x+e1, torch.zeros(len(x)), device = device )
+    j =   torch.zeros(len(x),2,2, device=device)
+    j[:,0,:]=(out0-out)/epsilon
+    j[:,1,:]=(out1-out)/epsilon
+    return torch.logdet(j)
+```
+
+```{python}
+
+```
