@@ -97,13 +97,6 @@ thetas=np.linspace(.5,4,500)
 plt.plot(thetas, dkl_exp(lamda, thetas));
 ```
 
-```{python}
-lamda = 2.0
-thetas=np.linspace(.5,4,500)
-plt.plot(thetas, dkl_exp_grad(lamda, thetas));
-plt.axhline(0, color='black');
-```
-
 We can change the variables in the above integral to $z$, by substituting $\phi=\varphi(z|\theta)$
 
 
@@ -119,6 +112,15 @@ This is so called _reparameterisation trick_. It is left for the reader to verif
 
 ### Training 
 
+
+$$\frac{d D_{KL}(q|p)}{d \theta}=\frac{\lambda-\theta}{\theta^2}$$
+
+```{python}
+lamda = 2.0
+thetas=np.linspace(.5,4,500)
+plt.plot(thetas, dkl_exp_grad(lamda, thetas));
+plt.axhline(0, color='black');
+```
 
 $\newcommand{\avg}[1]{\left\langle #1\right\rangle}$
 $$D_{KL}(q|p)=\avg{\log q(\phi)-\log p(\phi)}_q(\phi)\approx\frac{1}{n_s}\sum_{i=1}^{n_s}(\log q(\phi_i) -\log p(\phi_i)),\quad \phi_i\sim q(\phi_i)$$
@@ -164,7 +166,17 @@ optimizer = torch.optim.Adam((theta,),lr=0.1)
 ```
 
 ```{python}
-for epoch in range(50):
+history = {'loss':[], 'theta':[]}
+```
+
+```{python}
+from utils.live_plot import init_live_plot, update_plots
+```
+
+```{python}
+n_epochs=100
+live_plot = init_live_plot(1,n_epochs, plot_ess=False)
+for epoch in range(n_epochs):
     optimizer.zero_grad()
     z = torch.rand(batch_size)
     phi = flow(z,theta)
@@ -172,8 +184,20 @@ for epoch in range(50):
     log_p = torch.log(p(phi))
     dkl = torch.mean(log_q-log_p)
     dkl.backward()
-    print(f"{theta.item():.4f}, {dkl.item():.4f} {dkl_exp(lamda, theta.item()):.4f} {theta.grad.item():.4f}" )
+    history['loss'].append(dkl.detach().item())
+    history['theta'].append(theta.detach().item())
+                    
     optimizer.step()    
+    update_plots(history, **live_plot)
+```
+
+```{python}
+fig, ax = plt.subplots(figsize=(8,4))
+ax.axhline(lamda,c='black')
+ax.set_ylabel("$\\theta$",rotation='horizontal')
+ax.set_xlabel("epoch")
+ax.plot(np.arange(len(history['theta']))+1, history['theta']);
+ax.margins(0.01);
 ```
 
 ## Normal distribution
