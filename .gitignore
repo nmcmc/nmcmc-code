@@ -1,7 +1,8 @@
 
 .idea/
 
-nmcmc/src/nmcmc.egg-info/
+neumc/build
+neumc/src/neumc.egg-info
 
 *.ipynb
 
