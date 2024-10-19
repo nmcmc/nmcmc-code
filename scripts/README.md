@@ -5,72 +5,79 @@ This directory contains scripts that can be used to train and analyze models.
 ## Training scripts
 
 Those scripts can be used to train different models. They are all very similar and contain lots of duplicated code that
-was left on purpose as to allow them to be further developed separately. They share a common set of command line options
-that can be listed by running
-them with `-h` option. The most important options are: `n-eras`, `n-epochs-per-era`, `batch-size` and  `n-batches`. The
-training is performed in `n-eras` each of which consists of `n-epochs-per-era` epochs. Each epoch consists of one
-gradients step
-where gradient is calculated on  `n-batches` batches of configurations of size `batch-size`. Those two last parameters
+was left on purpose as to allow them to be further developed separately. All the models are defined on a
+two-dimensional lattice. The lattice size is a parameter of the model. By default, all scripts use the 8x8 square
+lattice.
+
+They are 'plain vanilla' scripts without any command line parameters. All the parameters have to be changed inside the
+script.
+
+Two parameters `batch_size` and `n_batches`
 are crucial for the efficiency. First of all for the REINFORCE estimator the total number of
-configurations `n_batches x batch_size` cannot be too small because of its high initial variance. We recommend at least
-1024 . Second, one should choose the biggest `batch-size` that does not cause the out of memory error on your GPU.
-Scripts periodically save the model to a file. The file name is constructed from the name of the loss function and the
-lattice size. For example `schwinger_REINFORCE_4x4.zip` is the name of the file for the Schwinger model trained with the
-REINFORCE estimator on the 4x4 lattice. Any existing file of this name will be overwritten. To choose another file name
-you can rename the file after running the script or modify the script itself. Each script can be run without providing
-any arguments. In this case it will use default values for all parameters. The default values are listed in the help
-message.
+configurations `n_batches x batch_size` cannot be too small because of its high initial variance.
+We recommend at least 1024. Second, one should choose the biggest `batch_size` that does not cause the out of memory
+error on your GPU.
 
-All scripts assume that a CUDA enabled GPU is available. If you want to run them on CPU you need to
-pass    `--device cpu` option, but it is not recommended for anything except maybe small phi4 models. If more than one
-CUDA device is available you can choose which one to use by passing `--device cuda:device_id` option.
+One of the most important parameters is the learning rate `lr`. For the Schwinger model we recommend `lr=0.00025`.
 
-### schwinger
+Another important parameter is the loss function used to get the gradient estimator. Currently three loss
+functions are implemented: 'rt' or reparameterization trick, 'REINFORCE' and 'path_gradient.' All scripts use the
+'REINFORCE' estimator by default.
 
-This script illustrates how to set up training for the Schwinger model.
+Scripts periodically save the model to a file. The file name is constructed from the name of the loss function and
+the lattice size. For example `schwinger_REINFORCE_4x4.zip` is the name of the file for the Schwinger model trained
+with the REINFORCE estimator on the 4x4 lattice. Those files are stored in the "out_{model name}" directory. If the
+directory does not exist it will be created in the current directory. Any existing file of this name will be
+overwritten. To choose another
+file name you can rename the file after running the script or modify the script itself.
 
-```shell
-python ./scripts/schwinger.py --n-eras=10 --n-epochs-per-era=100 --batch-size=512 --n-batches=2 --loss REINFORCE 
-```
+All scripts detect if a cuda GPU is available and use it if it is. If no GPU is available, the script will use the CPU.
 
-also provides a possibility to continue training from checkpoint
+More detailed information can be found in the scripts themselves.
 
-```shell
-python ./scripts/schwinger.py --continue schwinger_pytorch_REINFORCE_4x4.zip --n-eras=10 --n-epochs-per-era=100
-```
+There currently three training scripts:
 
-### u1
+### phi4.py
 
-Training pure gauge U(1) model. Offers a choice of two equivariant layers and two coupling layers.
+Trains a phi^4 scalar field model it has two parameters m^2 and lamda (misspelled lambda, because that is a python
+keyword) when lambda equals zero, the model is a free scalar field, and for m^2 >0 can be solved exactly.
+In such a case the script will compare the results with the exact solution.
 
-```shell
-python ./scripts/u1.py  --loss REINFORCE --equiv '2x1' --coupling cs 
-```
+### u1.py
 
-### phi4
+This is a pure gauge abelian U(1) model. It has one parameter beta which is the inverse coupling constant. The model is
+exactly solvable for any beta. The script will compare the results with the exact solution. Because of the gauge
+symmetry implementation, the lattice size is limited to multiples of four.
 
-Training phi4 model.
+This model has a large number of possible implementations. For more details, see the script itself.
+
+### schwinger.py
+
+This model extends the U(1) model by adding fermions. The fermions are implemented as the Wilson fermions. The fermionic
+part of the action is the determinant of the Wilson-Dirac operator. We calculate this determinant explicitly using the
+build in `torch.logdet` function. Because of that, in practice, the model is limited to the small lattice sizes like
+20x20. It is not recommended to run the model without a modern GPU with at least 8GB of memory.
 
 ## Analysis scripts
 
 ### nmcmc
 
 This script takes as an
-argument the name of the file with the model trained by the `schwinger.py` script and loads the model. Next it uses it
+argument the name of the file with the model trained by the `schwinger.py` script and loads the model. Next, it uses it
 to generate new configurations which are then used in the Neural Markov Chain Monte-Carlo (NMCMC) algorithm.
 
 ```shell
-python ./scripts/nmcmc.py  REINFORCE_4x4.zip
+python ./scripts/nmcmc.py  out_schwinger/scwinger_REINFORCE_4x4.zip
 ```
 
 ## Profiling scripts
 
-This is a collection of script that can be used to measure some properties of the models notably timings and memory
+This is a collection of scripts that can be used to measure some properties of the models, notably timings and memory
 usage.
 
 ### timings
 
-This scripts performs detailed timing measurements of the loss functions for the Schwinger model.
+This scripts performs detailed timing measurements on the loss functions for the Schwinger model.
 
 ### memory
 
