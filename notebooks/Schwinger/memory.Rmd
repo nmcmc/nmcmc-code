@@ -5,7 +5,7 @@ jupyter:
       extension: .Rmd
       format_name: rmarkdown
       format_version: '1.2'
-      jupytext_version: 1.15.0
+      jupytext_version: 1.16.4
   kernelspec:
     display_name: Python 3 (ipykernel)
     language: python
@@ -35,15 +35,13 @@ torch.__version__
 ```
 
 ```{python}
-import utils.profile
-import training.train
-import training.loss
+import neumc
 ```
 
 ```{python}
-from normalizing_flow.gauge_equivariant import make_schwinger_model
-import phys_models.schwinger as sch
-from utils import grab
+from neumc.nf.u1_model_asm import assemble_model_from_dict
+import neumc.physics.schwinger as sch
+from neumc.utils import grab
 ```
 
 ```{python}
@@ -74,18 +72,30 @@ n_layers = 48
 hidden_sizes = [64,64]
 kernel_size = 3
 n_knots = 9
+
+model_cfg = {'n_layers': 48,
+                 'masking': '2x1',
+                 'coupling': 'cs',
+                 'nn': {
+                     'hidden_channels': [64, 64],
+                     'kernel_size': 3,
+                     'dilation': [1, 2, 3],
+                 },
+                 'n_knots': 9,
+                 'float_dtype': 'float32',
+                 'lattice_shape': lattice_shape
+                 }
 ```
 
 ```{python}
-model = make_schwinger_model(n_knots=n_knots, lattice_shape=lattice_shape, n_layers=n_layers,
-                             hidden_sizes=hidden_sizes, kernel_size=kernel_size, dilations=[1,2,3],float_dtype="float32",
-                             device=torch_device)
+model = assemble_model_from_dict(model_cfg, device=torch_device, verbose=1)
+
 layers = model['layers']
 prior = model['prior']
 ```
 
 ```{python}
-loss_fn = training.loss.rt_loss
+loss_fn = neumc.training.loss.rt_loss
 ```
 
 ```{python}
@@ -102,7 +112,7 @@ torch.cuda.reset_peak_memory_stats()
 ```
 
 ```{python}
-with torch.autograd.graph.saved_tensors_hooks(pack_hook:=utils.profile.MemoryPackHook(), utils.profile.unpack_hook):
+with torch.autograd.graph.saved_tensors_hooks(pack_hook:=neumc.utils.profile.MemoryPackHook(), neumc.utils.profile.unpack_hook):
     l, logq, logp = loss_fn(z, log_prob_z, model=model, action=qed_action, use_amp=False)
 ```
 
@@ -133,9 +143,3 @@ l.backward()
 ```{python}
 print(f"{torch.cuda.max_memory_allocated()/2**30:.2f}GB")
 ```
-
-```{python}
-
-```
-
-# 

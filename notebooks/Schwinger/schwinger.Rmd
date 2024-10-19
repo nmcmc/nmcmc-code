@@ -5,7 +5,7 @@ jupyter:
       extension: .Rmd
       format_name: rmarkdown
       format_version: '1.2'
-      jupytext_version: 1.15.0
+      jupytext_version: 1.16.4
   kernelspec:
     display_name: Python 3 (ipykernel)
     language: python
@@ -20,7 +20,7 @@ jupyter:
 # Schwinger model
 
 
-This notebook illustrates how  to train the normalizing flow model for the 2D Schwinger model with two flavors of Wilson fermions \[1\].  
+This notebook illustrates how  to train the normalizing flow model for the 2D Schwinger model with two flavors of Wilson fermions \[1\].
 
 ```{python}
 import time
@@ -29,7 +29,7 @@ import torch
 import numpy as np
 import scipy
 
-import matplotlib.pyplot as plt    
+import matplotlib.pyplot as plt
 ```
 
 ```{python}
@@ -37,20 +37,22 @@ torch.__version__
 ```
 
 ```{python}
-import normalizing_flow.flow as nf
-from training.loss import REINFORCE_loss, rt_loss
-from training.train import train_step
+import neumc.nf.flow as nf
+from neumc.training.loss import REINFORCE_loss, rt_loss
+from neumc.training.train import train_step
 
-import utils
-import utils.metrics as metrics
-from utils.live_plot import init_live_plot, update_plots
-import utils.checkpoint as chck
+import neumc.utils
+import neumc.utils.metrics as metrics
+import sys
+sys.path.append('..')
+from live_plot import init_live_plot, update_plots
+import neumc.utils.checkpoint as chck
 
-import phys_models.U1 as u1
-import phys_models.schwinger as sch
+import neumc.physics.u1 as u1
+import neumc.physics.schwinger as sch
 
 
-from normalizing_flow.gauge_equivariant import make_schwinger_model
+from  neumc.nf.u1_model_asm import assemble_model_from_dict
 ```
 
 ```{python}
@@ -71,7 +73,7 @@ float_dtype = "float32"
 L = 8
 lattice_shape = (L,L)
 link_shape = (2,L,L)
-beta = 2.0
+beta = 1.0
 kappa = 0.276
 u1_action = u1.U1GaugeAction(beta)
 qed_action =  sch.QEDAction(beta, kappa)
@@ -104,22 +106,22 @@ D.shape
 ## Creating the model
 
 ```{python}
-# Neural network parameters
-model_cfg = {
-    'lattice_shape' : lattice_shape,
-    'n_layers' : 48,
-    'hidden_sizes' : [64,64],
-    'kernel_size' : 3,
-    'dilation' : [1,2,3],
-# Circular splines
-    'n_knots' : 9,
-    'float_dtype' : float_dtype
-}
-
+model_cfg = {'n_layers': 48,
+                 'masking': '2x1',
+                 'coupling': 'cs',
+                 'nn': {
+                     'hidden_channels': [64, 64],
+                     'kernel_size': 3,
+                     'dilation': [1, 2, 3],
+                 },
+                 'n_knots': 9,
+                 'float_dtype': 'float32',
+                 'lattice_shape': lattice_shape
+                 }
 ```
 
 ```{python}
-model = make_schwinger_model(**model_cfg, device=torch_device, verbose=1)
+model = assemble_model_from_dict(model_cfg, device=torch_device, verbose=1)
 ```
 
 ```{python}
@@ -150,14 +152,19 @@ optimizer = torch.optim.Adam(model['layers'].parameters(), lr=base_lr)
 ```
 
 ```{python}
-# Those should be adjusted according to the lattice size and the amount of the memory that your GPU has. 
+# Those should be adjusted according to the lattice size and the amount of the memory that your GPU has.
 batch_size= 512
-n_batches= 2 # number of batches used for one gradient update i.e. the gradient is effectively estimated from batch_size * n_batches configurations. 
+n_batches= 2 # number of batches used for one gradient update i.e. the gradient is effectively estimated from batch_size * n_batches configurations.
+```
+
+```{python}
+from live_plot import init_live_plot, update_plots
+import time
 ```
 
 ```{python}
 # %%time
-live_plot = init_live_plot(N_era, N_epoch)
+live_plot = init_live_plot(N_era, N_epoch, metric='dkl')
 start_time = time.time()
 
 total_epochs = N_era*N_epoch
@@ -165,23 +172,25 @@ epochs_done=0
 
 for era in range(N_era):
     for epoch in range(N_epoch):
-        m = train_step(use_amp=False, model=model, action=qed_action, loss_fn=loss_function, batch_size=batch_size, n_batches=n_batches, optimizer=optimizer)
+        m = train_step(use_amp=False, model=model, action=qed_action, loss_fn=loss_function,
+                       batch_size=batch_size, n_batches=n_batches, optimizer=optimizer)
         metrics.add_metrics(history, m)
         epochs_done+=1
         if (epoch+1) % print_freq == 0:
-            chck.safe_save_checkpoint(model=layers, optimizer=optimizer, scheduler=None,era=era, path=f"{loss_fn_name}_{L:02d}x{L:02d}.zip", model_cfg=model_cfg)
+            chck.safe_save_checkpoint(model=layers, optimizer=optimizer, scheduler=None,era=era,
+                                      path=f"{loss_fn_name}_{L:02d}x{L:02d}.zip", model_cfg=model_cfg)
             ellapsed_time = time.time() - start_time
             avg = metrics.average_metrics(history, N_epoch, history.keys())
 
-           
+
             print(f"Era {era:3d} epoch {epoch:4d} elapsed time {ellapsed_time:.1f}", end="")
             if epochs_done>0 :
                 time_per_epoch = ellapsed_time/epochs_done
                 time_remaining = (total_epochs-epochs_done)*time_per_epoch
-                print(f"  {time_per_epoch:.2f}s/epoch  remaining {utils.format_time(time_remaining):s}")
-                
+                print(f"  {time_per_epoch:.2f}s/epoch  remaining {neumc.utils.format_time(time_remaining):s}")
+
                 metrics.print_dict(avg)
-                
+
         if (epoch+1) % plot_freq == 0:
             update_plots(history, **live_plot);
 
@@ -195,7 +204,7 @@ print(f"{ellapsed_time/N_era:.2f}s/era")
 We could go on with sampling from the model but usually we will use the saved models trained on some GPU clusters. Code below explains how it can be done.
 
 ```{python}
-loaded = torch.load(f"{loss_fn_name}_{L:02d}x{L:02d}.zip")
+loaded = torch.load(f"{loss_fn_name}_{L:02d}x{L:02d}.zip", weights_only=False)
 ```
 
 ```{python}
@@ -211,7 +220,7 @@ link_shape = (2, L, L)
 ```
 
 ```{python}
-model = make_schwinger_model(**loaded['model_cfg'], device=torch_device, verbose=1)
+model = assemble_model_from_dict(loaded['model_cfg'], device=torch_device, verbose=1)
 ```
 
 ```{python}
@@ -226,11 +235,15 @@ layers.load_state_dict(loaded['state_dict'])
 ## Further training
 
 
-If we would like to train our model  further we also need to load the optimizer and optionally scheduler if present. This is needed because most of the optimizers, notably `Adam` are statefull. 
+If we would like to train our model  further we also need to load the optimizer and optionally scheduler if present. This is needed because most of the optimizers, notably `Adam` are statefull.
 
 ```{python}
-optimizer = getattr(torch.optim,loaded['optim'])(layers.parameters())
-optimizer.load_state_dict(loaded['opt_state_dict'])
+loaded.keys()
+```
+
+```{python}
+optimizer = getattr(torch.optim,loaded['optimizer'])(layers.parameters())
+optimizer.load_state_dict(loaded['optimizer_state_dict'])
 ```
 
 ```{python}
@@ -248,7 +261,7 @@ history = {
 }
 
 
-live_plot = init_live_plot(N_era, N_epoch)
+live_plot = init_live_plot(N_era, N_epoch, metric='dkl')
 start_time = time.time()
 
 total_epochs = N_era*N_epoch
@@ -260,20 +273,20 @@ for era in range(N_era):
         metrics.add_metrics(history, m)
         epochs_done+=1
         if (epoch+1) % print_freq == 0:
-            
+
             chck.safe_save_checkpoint(model=layers, optimizer=optimizer, scheduler=None, era=era, path=f"{loss_fn_name}_{L:02d}x{L:02d}.zip")
             ellapsed_time = time.time()-start_time
             avg = metrics.average_metrics(history, N_epoch, history.keys())
 
-           
+
             print(f"Era {era:3d} epoch {epoch:4d} ellapsed time {ellapsed_time:.1f}", end="")
             if epochs_done>0 :
                 time_per_epoch = ellapsed_time/epochs_done
                 time_remaining = (total_epochs-epochs_done)*time_per_epoch
-                print(f"  {time_per_epoch:.2f}s/epoch  remaining {utils.format_time(time_remaining):s}")
-                
+                print(f"  {time_per_epoch:.2f}s/epoch  remaining {neumc.utils.format_time(time_remaining):s}")
+
                 metrics.print_dict(avg)
-                
+
         if (epoch+1) % plot_freq == 0:
             update_plots(history, **live_plot);
 
@@ -284,7 +297,7 @@ print(f"{ellapsed_time/N_era:.2f}s/era")
 ## Sampling
 
 
-After we have trained the model we can do the actual sampling. Because of the memory constraints we generate samples in batches which size has to again be determined based on the size of the lattice and the amount of memory on our GPU.  Function `sample` from the module [`normalizing_flow.flow`](../../nmcmc/src/normalizing_flow/flow.py) returns the generated configurations $u$ as well as the logarithms of the probability $\log q(u)$ with which each configuration was generated. 
+After we have trained the model we can do the actual sampling. Because of the memory constraints we generate samples in batches which size has to again be determined based on the size of the lattice and the amount of memory on our GPU.  Function `sample` from the module [`normalizing_flow.flow`](../../nmcmc/src/normalizing_flow/flow.py) returns the generated configurations $u$ as well as the logarithms of the probability $\log q(u)$ with which each configuration was generated.
 
 ```{python}
 # %%time
@@ -294,23 +307,23 @@ u,lq = nf.sample(n_samples=2**16, batch_size=1024, prior=prior, layers=layers)
 Once we have the configurations we have to calculate the value of the action $S(u)$ for each of them. This gives us the logarithm of the desired probability up to a constant
 
 
-$$ -S(u)= \log p(u) + \log Z$$ 
+$$ -S(u)= \log p(u) + \log Z$$
 
 
-where $Z$ is the  partition function. 
+where $Z$ is the  partition function.
 
 ```{python}
 # %%time
-lp = -nf.calc_action(u,batch_size=128, action=qed_action, device=torch_device)
+lp = -neumc.utils.calc_fnc.calc_action(u,batch_size=128, action=qed_action, device=torch_device)
 ```
 
-#### ESS 
+#### ESS
 
 
 Having logarithm of both $q(u)$ and $p(u)$ we can estimate the effective sample size on larger sample
 
 ```{python}
-ess = nf.compute_ess(lp,lq)
+ess = neumc.utils.calc_fnc.compute_ess(lp,lq)
 print(f'ESS = {ess:.4f}')
 ```
 
@@ -326,7 +339,7 @@ After that we can estimate the variational free energy
 $$F_{q}=\int\text{d}u\, q(u) \left(\log q(u)+ S(u)\right) \approx \frac{1}{N}\sum_{i=1}^N\left(\log q(u_i) + S(u_i)\right)\qquad u_i\sim q(u_i)$$
 
 
-where notation $u_i\sim q(u_i)$ means that $u_i$ was generated with probability $u_i$. 
+where notation $u_i\sim q(u_i)$ means that $u_i$ was generated with probability $u_i$.
 
 ```{python}
 F_q = torch.mean(lq-lp)
@@ -342,7 +355,7 @@ We can obtain a non-biased estimator of $Z$ by using neural importance sampling 
 $$Z = \int\text{d}u\, e^{-S(u)} = \int\text{d}u\, q(u) \frac{e^{-S(u)}}{q(u)}\approx \frac{1}{N}\sum_{1}^N w(u_i)\qquad u_i \sim q(u_i)$$
 
 
-where 
+where
 
 
 $$w(u_i)=\frac{-S(u_i)}{q(u_i)}$$
@@ -377,7 +390,7 @@ ax.set_xlabel('$\log P(u)$')
 ax.set_ylabel('$\log q(u)$')
 ```
 
-For a perfectly trained model all points should lie on the straight line 
+For a perfectly trained model all points should lie on the straight line
 
 
 $$\log q(u)=  \log p(u) = \log P(u)-\log Z$$
@@ -386,7 +399,8 @@ $$\log q(u)=  \log p(u) = \log P(u)-\log Z$$
 ## Neural Markov Chain Monte-Carlo
 
 ```{python}
-from monte_carlo.nmcmc import metropolize
+from neumc.mc import metropolize
+from neumc.utils import grab
 ```
 
 ```{python}
@@ -394,11 +408,11 @@ u_p, s_p, s_q, accepted = metropolize(u, lq, lp)
 ```
 
 ```{python}
-print("Accept rate:", utils.grab(accepted).mean())
+print("Accept rate:", grab(accepted).mean())
 ```
 
 ```{python}
-Q = utils.grab(u1.topo_charge(u_p))
+Q = grab(u1.topo_charge(u_p))
 plt.figure(figsize=(5,3.5), dpi=125)
 plt.plot(Q)
 plt.xlabel(r'$t_{MC}$')
@@ -407,7 +421,7 @@ plt.show()
 ```
 
 ```{python}
-from utils.stats_utils import bootstrap
+from neumc.utils.stats_utils import bootstrap
 ```
 
 ```{python}
@@ -427,7 +441,7 @@ plt.plot(sig);
 ## Chiral condensate
 
 ```{python}
-from utils.calc_function import calc_function
+from neumc.utils.calc_fnc import calc_function
 ```
 
 ```{python}
@@ -450,15 +464,11 @@ plt.plot(cond.cpu());
 ### Autocorelation time
 
 ```{python}
-from utils.stats_utils import ac_and_tau_int
+from neumc.utils.stats_utils import ac_and_tau_int
 ```
 
 ```{python}
-
-```
-
-```{python}
-tau,ac = ac_and_tau_int(utils.grab(cond))
+tau,ac = ac_and_tau_int(grab(cond))
 tau
 ```
 
@@ -469,4 +479,4 @@ plt.plot(ac);
 ## References
 
 
-1. M.S. Albergo et all.," Flow-based sampling in the lattice Schwinger model at criticality" Phys. Rev. __D106__ (2022) 014514.  
+1. M.S. Albergo et all.," Flow-based sampling in the lattice Schwinger model at criticality" Phys. Rev. __D106__ (2022) 014514.

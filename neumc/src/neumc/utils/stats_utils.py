@@ -70,14 +70,12 @@ def bootstrapf(f, x, *, n_samples, binsize=1):
     std
         standard deviation of the estimator
     """
-    print("bootstrap")
     n_bins = len(x) // binsize
     xb = np.stack(np.array_split(x, n_bins), axis=0)
 
     boots = []
 
     for i in range(n_samples):
-        print(i)
         bsample = np.resize(
             xb[np.random.choice(n_bins, n_bins)], (n_bins * binsize, *x.shape[1:])
         )
